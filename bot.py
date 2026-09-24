@@ -16,6 +16,7 @@ import logging
 import logging.handlers
 import os
 import socket
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -31,7 +32,11 @@ HERE = Path(__file__).resolve().parent
 
 
 def data_dir() -> Path:
-    """A folder outside Dropbox for the database, log and (optionally) the .env with the token."""
+    """A folder outside Dropbox for the database, log and (optionally) the .env with the token.
+
+    Override with AIAVBOT_DATA_DIR (the VPS service uses /var/lib/aiavbot)."""
+    if os.getenv("AIAVBOT_DATA_DIR"):
+        return Path(os.environ["AIAVBOT_DATA_DIR"])
     if sys.platform == "win32" and os.getenv("LOCALAPPDATA"):
         return Path(os.environ["LOCALAPPDATA"]) / "AIAVBOT"
     return Path.home() / ".aiavbot"
@@ -40,6 +45,28 @@ def data_dir() -> Path:
 # .env is read from the data folder first (safest), then from next to this script.
 load_dotenv(data_dir() / ".env")
 load_dotenv(HERE / ".env")
+
+
+def instance_info() -> dict:
+    """Which copy of the bot this is: AIAVBOT_INSTANCE (e.g. 'live' / 'test') plus the git branch and commit."""
+    info = {"name": os.getenv("AIAVBOT_INSTANCE") or "local", "branch": None, "commit": None}
+    try:
+        def git(*args: str) -> str:
+            return subprocess.check_output(["git", *args], cwd=HERE, stderr=subprocess.DEVNULL,
+                                           timeout=5).decode().strip()
+        info["commit"] = git("rev-parse", "--short", "HEAD")
+        branch = git("rev-parse", "--abbrev-ref", "HEAD")
+        info["branch"] = None if branch == "HEAD" else branch      # "HEAD" = detached (e.g. a rollback)
+    except Exception:
+        pass
+    return info
+
+
+def instance_label(info: dict) -> str:
+    parts = [info["name"]]
+    if info.get("branch") or info.get("commit"):
+        parts.append(f"{info.get('branch') or 'detached'} @ {info.get('commit') or '?'}")
+    return " · ".join(parts)
 
 
 def default_db_path() -> Path:
@@ -93,6 +120,8 @@ class AIAVBot(commands.Bot):
         )
         self.db = db
         self.dev_guild_id = dev_guild_id
+        self.instance = instance_info()
+        self.instance_label = instance_label(self.instance)
 
     async def setup_hook(self) -> None:
         await self.load_extension("suno_flow")
@@ -142,7 +171,8 @@ class AIAVBot(commands.Bot):
                 logging.warning("Slow connection to Discord: a tiny request took %.1fs", took)
 
     async def on_ready(self) -> None:
-        logging.info("Logged in as %s (id %s) in %d server(s)", self.user, self.user.id, len(self.guilds))
+        logging.info("Logged in as %s (id %s) in %d server(s) | instance: %s", self.user, self.user.id,
+                     len(self.guilds), self.instance_label)
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:
         """Diagnostics: Discord only allows 3 seconds to answer a click or command."""
@@ -172,8 +202,9 @@ def main() -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     data_dir().mkdir(parents=True, exist_ok=True)
     if not ensure_single_instance(data_dir()):
-        print("AIAVBOT is already running in another window. Close that one first.")
-        input("Press Enter to exit.")
+        print("AIAVBOT is already running (another window or service). Close that one first.")
+        if sys.stdin and sys.stdin.isatty():       # only wait for Enter in an interactive window
+            input("Press Enter to exit.")
         sys.exit(1)
     setup_logging(db_path.parent)
     logging.info("Database: %s", db_path)

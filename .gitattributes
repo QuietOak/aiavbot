@@ -1,4 +1,8 @@
 # Normalise line endings in the repo; Windows batch files must keep CRLF to run correctly.
 * text=auto
 *.bat text eol=crlf
+# Linux deploy files must keep LF (a Windows CRLF would break them on the server).
+*.sh text eol=lf
+deploy/*.service text eol=lf
+deploy/aiavbot-backup text eol=lf
 *.png binary
