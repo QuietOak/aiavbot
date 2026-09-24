@@ -1,7 +1,30 @@
-# AIAVBOT – Setup
+<p align="center">
+  <img src="AIAVBot_Icon.png" alt="AIAVBOT" width="220">
+</p>
 
-AIAVBOT replies to Suno links in the music channel and offers members quick, optional ways to share more:
-add a line about the song, post to Collab Requests, or start a thread. Design: `../AIAVBOT_Suno_Flow_Spec.md`.
+<h1 align="center">AIAVBOT</h1>
+
+<p align="center">
+  <em>A Discord bot that turns quick shares into conversation, discovery and collaboration<br>
+  for the <strong>Dreamers AI Hub</strong> community.</em>
+</p>
+
+<p align="center">
+  🎵 Music sharing · 🤝 Collab requests · 🎭 Characters · 🎉 Gallery · 🏆 Reaction milestones · 🌙 Nightly updates
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg" alt="License: AGPL-3.0-or-later"></a>
+  <img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/discord.py-2.6%2B-5865F2.svg" alt="discord.py 2.6+">
+</p>
+
+AIAVBOT keeps sharing easy and makes it more rewarding. When members post music, characters, collab ideas or
+finished work, the bot replies with quick, optional ways to go further: add a line in their own words,
+start a conversation, find collaborators, join a seasonal theme, or celebrate a finished collab. It's
+product-agnostic: Suno, YouTube, Spotify, The Stoop, Chub, character card files and more all work.
+
+# Setup
 
 ## 1. Create the bot in Discord (one time)
 
