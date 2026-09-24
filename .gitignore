@@ -1,0 +1,39 @@
+# ---------------------------------------------------------------- secrets: NEVER commit
+# Bot token and server ids live here. Only the blank template (.env.example) is shared.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---------------------------------------------------------------- bot data
+# Normally kept in %LOCALAPPDATA%\AIAVBOT, ignored here in case DB_PATH points at this folder.
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+*.log.*
+aiavbot.lock
+
+# ---------------------------------------------------------------- Python
+# Compiled caches contain the local Windows user path.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+
+# ---------------------------------------------------------------- editors / OS / Dropbox
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+.dropbox
+.dropbox.attr
+.dropbox.cache/
+*conflicted copy*
