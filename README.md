@@ -60,6 +60,16 @@ Double-click **`run_bot.bat`**. The first run sets up Python packages (needs Pyt
 
 The database and a log file (`aiavbot.log`) live in `%LOCALAPPDATA%\AIAVBOT`, outside Dropbox, because syncing can corrupt an open database.
 
+## Running it 24/7 on a VPS: test + live
+
+The bot runs as two separate copies on one small Linux server:
+- **test**: branch `dev`, its own bot, your test server
+- **live**: branch `main`, its own bot, Dreamers
+
+They share no code, settings or data. Work on `dev`, try it on the test server, then merge to `main` for live.
+One script sets up each copy (service, auto-restart, daily backups, firewall, security updates):
+see **[`deploy/DEPLOY.md`](deploy/DEPLOY.md)**.
+
 ## 4. Set it up in the server
 
 `/aiav` commands are for mods and admins only. Administrators and members with Manage Server can always
@@ -155,6 +165,8 @@ All member-facing text, collab types and response types are in **`texts.py`**. E
 | `music_links.py` | Recognises other music sites and reads their title / artist / cover. Add sites in `MUSIC_SITES`. |
 | `texts.py` | All wording |
 | `run_bot.bat` | Windows launcher |
+| `run_bot_autostart.bat` | Windows launcher for the Startup folder (waits for network, restarts if stopped) |
+| `deploy/` | VPS hosting for the test + live copies: setup and update scripts, systemd service template, backups, and the launch guide (`DEPLOY.md`) |
 
 ## Security
 

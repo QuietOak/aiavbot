@@ -1,0 +1,23 @@
+#!/bin/sh
+# AIAVBOT daily database backup for every instance. Installed to /etc/cron.daily/aiavbot-backup.
+# Uses SQLite's online backup, so it's safe while the bots are running. Keeps 14 days per instance.
+#   /var/lib/aiavbot/<instance>/aiavbot.db  ->  /var/lib/aiavbot/<instance>/backups/
+# Optional: pass one instance name to back up just that one.
+# Copyright (C) 2026 Oak. SPDX-License-Identifier: AGPL-3.0-or-later
+set -e
+ROOT=/var/lib/aiavbot
+KEEP_DAYS=14
+
+for DB in "$ROOT"/*/aiavbot.db; do
+    [ -f "$DB" ] || continue
+    DIR=$(dirname "$DB")
+    NAME=$(basename "$DIR")
+    if [ -n "${1:-}" ] && [ "$1" != "$NAME" ]; then continue; fi
+    DEST="$DIR/backups"
+    mkdir -p "$DEST"
+    OUT="$DEST/aiavbot-$(date +%F_%H%M).db"
+    sqlite3 "$DB" ".backup '$OUT'"
+    chown aiavbot:aiavbot "$DEST" "$OUT"
+    chmod 640 "$OUT"
+    find "$DEST" -name 'aiavbot-*.db' -mtime +"$KEEP_DAYS" -delete
+done

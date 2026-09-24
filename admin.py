@@ -288,8 +288,9 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
         if not cfg:
             return await interaction.followup.send("Not set up yet. Run `/aiav setup` first.", ephemeral=True)
 
+        label = getattr(self.bot, "instance_label", None)
         lines = [
-            "**AIAVBOT status**",
+            "**AIAVBOT status**" + (f"  ·  🧩 `{label}`" if label else ""),
             f"🎵 Music: {fmt_channel(cfg.music_channel_id)}",
             f"🤝 Collab requests: {fmt_channel(cfg.collab_channel_id)}",
             f"🖼️ Gallery: {fmt_channel(cfg.gallery_channel_id)}",

@@ -1,0 +1,59 @@
+# AIAVBOT systemd service TEMPLATE, one copy per instance (e.g. aiavbot@live, aiavbot@test).
+# Installed to /etc/systemd/system/aiavbot@.service by setup_vps.sh / update.sh.
+# %i = the instance name. Every instance has its own code, settings and data:
+#   code      /opt/aiavbot/%i            (git clone on its own branch)
+#   settings  /etc/aiavbot/%i.env        (token + server ID, root-only)
+#   data      /var/lib/aiavbot/%i/       (database, log, backups)
+# Copyright (C) 2026 Oak. SPDX-License-Identifier: AGPL-3.0-or-later
+
+[Unit]
+Description=AIAVBOT Discord bot (%i)
+Wants=network-online.target
+After=network-online.target time-sync.target
+# Keep retrying forever (e.g. while Discord or the network is down).
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=aiavbot
+Group=aiavbot
+WorkingDirectory=/opt/aiavbot/%i
+
+EnvironmentFile=/etc/aiavbot/%i.env
+Environment=AIAVBOT_INSTANCE=%i
+Environment=AIAVBOT_DATA_DIR=/var/lib/aiavbot/%i
+Environment=DB_PATH=/var/lib/aiavbot/%i/aiavbot.db
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+ExecStart=/opt/aiavbot/%i/.venv/bin/python bot.py
+Restart=always
+RestartSec=10
+TimeoutStopSec=20
+
+# /var/lib/aiavbot/%i is created and owned by systemd.
+StateDirectory=aiavbot/%i
+StateDirectoryMode=0750
+
+# Hardening: each instance can only write to its own data folder and only talk over the network.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/aiavbot/%i
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
