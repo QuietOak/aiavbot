@@ -136,6 +136,7 @@ CHARACTER_ABOUT_FIELD = "About the character"
 CHARACTER_TAGS_FIELD = "Tags"
 CHARACTER_CREATOR_FIELD = "Card creator"
 CHARACTER_ADULT_NOTE = "🔞 Tagged 18+. Details are on the card itself."
+COLLAB_CHARACTER_UNAVAILABLE = "🚪 This character isn't available on The Stoop right now."
 CHARACTER_OPEN = "⬇️ Open on {site}"          # link button on character cards
 
 # Collab types offered when the request is for a character. (value, label, emoji, short description)
@@ -279,3 +280,90 @@ MILESTONE_MESSAGES = {
     50: "🏆 **{count} reactions!** Legendary. Huge congratulations, {author}! {link}",
 }
 MILESTONE_DEFAULT = "🎉 {link} has **{count} reactions**! Congratulations {author}!"
+
+
+# ================================================================== the porch
+# Character channels: an SFW porch and an 18+ porch (Discord age-restricted). Cards come from members
+# sharing a character (The Stoop, Chub, ..., or a PNG/JSON card file) and from The Stoop arrival feed.
+PORCH_ARRIVAL = "🚪 Someone new just walked up to the porch: **{name}**!"
+PORCH_SHARED = "🎭 **{poster}** brought **{name}** to the porch!"
+PORCH_ALREADY_HERE = "🎭 **{name}** is already on the porch! Say hi here: {url}"
+PORCH_CREATOR_FIELD = "Creator"
+PORCH_BASED_ON = "Based on a card by {name}"
+PORCH_TAGS_FIELD = "Tags"
+PORCH_STATS_FIELD = "On The Stoop"
+PORCH_DOWNLOADS = "⬇️ {n:,} downloads"
+PORCH_MOD_PICK = "🏅 Mod pick"
+PORCH_VERSION = "v{n}"
+PORCH_TYPES = {"SOLO": "👤 Solo", "GROUP": "👥 Group", "WORLD": "🗺️ World"}
+PORCH_VERIFIED = " ✅"                       # after a verified creator's name
+PORCH_MET_NONE = "Chatted with {name}? Tap ✅ I met {name}!"
+PORCH_MET_ONE = "✅ 1 Dreamer has met {name}"
+PORCH_MET_MANY = "✅ {n} Dreamers have met {name}"
+
+# 18+ characters outside the age-restricted porch: name + link only.
+PORCH_ADULT_TITLE = "🔞 {name}"
+PORCH_ADULT_TEXT = "🔞 18+ character. Details and art stay on {site}{porch18}."
+PORCH_ADULT_WHERE = " and in {channel}"
+# A card that disappeared (deleted, in review, removed) or was tombstoned after 7 days.
+PORCH_MISSING = "🚪 This character isn't available right now. It may be getting an update, or it was removed."
+PORCH_GONE = "🚪 This character has left the porch."
+PORCH_UPDATE_NOTE = "✨ **{name}** got an update (v{old} → v{new})! Check it out: {url}"
+PORCH_GONE_THREAD = "🚪 {name} has left the porch. Thanks for all the hellos! 💛"
+PORCH_UNAVAILABLE_LINK = "🚪 That character isn't available on {site} right now (it may be getting an update). Try again later!"
+
+# Buttons on porch cards
+PORCH_BTN_HI = "👋 Say hi"
+PORCH_BTN_MET = "✅ I met {name}!"
+PORCH_BTN_COLLAB = "🤝 Start a collab"
+PORCH_BTN_REPORT = "🚩 Report"
+PORCH_BTN_OPEN = "⬇️ Open on {site}"
+
+PORCH_HI_THREAD = "👋 {name}"
+PORCH_HI_INTRO = "👋 This is the place to say hi to **{name}**{by}! Played a scene, loved a line, have ideas? Share it here."
+PORCH_HI_BY = " by {creator}"
+PORCH_HI_DONE = "Here's {name}'s thread: {url} 👋"
+PORCH_MET_DONE = "Thanks for letting everyone know! 💛 Want to tell others how it went?"
+PORCH_MET_AGAIN = "You've already said you met {name}. 💛"
+PORCH_MET_TELL = "💬 Say how it went"
+PORCH_HOW_TITLE = "How was it?"
+PORCH_HOW_LABEL = "A line about your time with them"
+PORCH_HOW_PLACEHOLDER = "e.g. She forecast my love life. Still no rain."
+PORCH_HOW_POST = "💬 **{user}** met **{name}**: “{text}”"
+PORCH_HOW_DONE = "Posted in {name}'s thread: {url} 💬"
+PORCH_CARD_GONE = "This character card isn't available anymore."
+PORCH_STALE = "This character isn't available right now."
+PORCH_ADULT_BUTTONS = "This is an 18+ character, so say hi and collab from the 18+ porch. 🔞"
+
+PORCH_REPORT_TITLE = "Report this character"
+PORCH_REPORT_REASON = "What's wrong?"
+PORCH_REPORT_REASONS = [
+    ("rules", "Breaks the server rules", "🚫"),
+    ("minor", "Minor or minor-coded character", "⛔"),
+    ("real", "Based on a real person", "🧍"),
+    ("stolen", "Stolen / not the creator's", "🕵️"),
+    ("rating", "Wrong rating (should be 18+)", "🔞"),
+    ("other", "Something else", "❓"),
+]
+PORCH_REPORT_DETAILS = "Details (optional)"
+PORCH_REPORT_PLACEHOLDER = "Anything the mods should know"
+PORCH_REPORT_DONE = "Thanks. The mods have been told privately. 🛡️"
+PORCH_REPORT_NO_CHANNEL = ("Thanks. I couldn't reach the mods automatically, so please message a moderator "
+                           "with a link to the card.")
+PORCH_REPORT_HEADER = "🚩 **Character report**"
+
+# Mod heads-ups (sent to the mod alerts channel)
+MOD_ALERT_MISSING = ("🛡️ A Stoop character shared here is no longer available (deleted, removed or in review): "
+                     "{url}\nDiscord may still show its old preview. Check whether the post needs removing.")
+MOD_ALERT_ADULT = ("🛡️ A Stoop character shared in an SFW channel is now **18+**: {url}\n"
+                   "Discord may still show its old preview. Check whether the post needs removing.")
+
+# Nightly update: characters line (shown only when a porch channel is set up)
+PORCH_STAT_TITLE = "🎭 Characters"
+PORCH_STAT_LABELS = [
+    ("porch_arrival", "new arrivals"),
+    ("porch_share", "shared"),
+    ("porch_hi", "say-hi threads"),
+    ("porch_met", "'I met'"),
+]
+PORCH_STOOP_TOTAL = "The Stoop: {total:,} characters"

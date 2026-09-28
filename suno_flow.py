@@ -691,6 +691,9 @@ class SunoFlow(commands.Cog):
             if hit and time.time() - hit[0] < CACHE_TTL:
                 return hit[1]
             if character_links.site_for(url):
+                stoop_info = await self.stoop_info(url)
+                if stoop_info is not None:
+                    return stoop_info
                 info = await character_links.fetch_character(url, self.http)
                 if info.get("title"):
                     self.cache[url] = (time.time(), info)
@@ -712,8 +715,60 @@ class SunoFlow(commands.Cog):
         songs = list(await asyncio.gather(*(one(u) for u in share.links)))
         self.db.update_share(share.post_id, songs=songs)
         for s in songs:
-            self.db.remember_song(s, share.guild_id, share.poster_id, share.post_id)
+            if s.get("stoop") and s.get("id") and share.kind == "collab":
+                # A member's post in the (SFW) collab channel links this card: watch it for removal / 18+.
+                self.db.add_stoop_ref(share.post_id, s["id"], share.guild_id, share.channel_id, "member_post",
+                                      False, state="alerted" if s.get("nsfw") else "ok")
+            elif not character_links.is_character(s):
+                self.db.remember_song(s, share.guild_id, share.poster_id, share.post_id)
         return songs
+
+    async def stoop_info(self, url: str) -> Optional[dict]:
+        """A Stoop link, read through the partner API (the Porch cog owns the client).
+        None = not a Stoop card link or the API can't be asked (fall back to the link preview).
+        An unavailable card (404) returns a blank character with no name, art or description."""
+        import stoop_api
+        porch = self.bot.get_cog("Porch")
+        stoop_id = stoop_api.card_id_from_url(url)
+        if porch is None or not stoop_id or not porch.client.enabled:
+            return None
+        result, card = await porch.lookup(stoop_id)
+        if result == "ok" and card:
+            return stoop_api.to_character_info(card)
+        if result == "missing":
+            info = character_links._blank(stoop_api.card_url(stoop_id), "The Stoop")
+            info.update(id=stoop_id, stoop=True, unavailable=True)
+            return info
+        # The API couldn't be asked: name + link only (rating unknown), and re-check it soon.
+        import porch as porch_mod
+        preview = await character_links.fetch_character(url, self.http)
+        porch.db.note_stoop_pending(stoop_id)
+        return porch_mod.neutral_placeholder(preview, stoop_id)
+
+    async def fresh_character(self, song: dict) -> dict:
+        """Re-check a Stoop character right before it's shown on a new card (its rating may have changed)."""
+        import stoop_api
+        porch = self.bot.get_cog("Porch")
+        if not (song.get("stoop") and song.get("id")) or porch is None or not porch.client.enabled:
+            return song
+        result, card = await porch.lookup(song["id"], max_age=0)      # always ask: collab posts are rare
+        if result == "ok" and card:
+            fresh = stoop_api.to_character_info(card)
+            fresh["nsfw"] = fresh["nsfw"] or bool(song.get("nsfw"))   # an 18+-porch origin stays 18+
+            return fresh
+        if result == "missing":
+            gone = dict(song)
+            gone.update(unavailable=True, description=None, tags=[], stoop_asset=None, image_url=None)
+            return gone
+        return song
+
+    async def character_art(self, song: dict) -> Optional[discord.File]:
+        """The Stoop card's art as an attachment (it needs the API key, so Discord can't load it by URL).
+        Never for 18+ characters: collab and theme channels are SFW."""
+        if not song.get("stoop_asset") or song.get("nsfw"):
+            return None
+        porch = self.bot.get_cog("Porch")
+        return await porch.image_file(song["stoop_asset"]) if porch else None
 
     async def get_songs(self, share: Share, wait: float) -> Optional[list[dict]]:
         if share.songs is not None:
@@ -855,7 +910,9 @@ class SunoFlow(commands.Cog):
         From a post in the collab channel: the bot's reply under the post becomes the card."""
         db, user = self.db, interaction.user
         share = db.get_share(post_id)
-        from_music = share.kind == "music"
+        from_porch = share.kind == "porch"
+        from_music = share.kind == "music" or from_porch      # both post a NEW card in the collab channel
+        original_url = share.origin_url or share.jump_url
 
         if share.links and share.songs is None:
             await self.get_songs(share, wait=8)
@@ -864,7 +921,7 @@ class SunoFlow(commands.Cog):
         is_char = self.is_character_share(share)
         type_list = T.CHARACTER_COLLAB_TYPES if is_char else T.COLLAB_TYPES
         types = [t for t in type_list if t[0] in type_values]
-        song = share.song or {}
+        song = await self.fresh_character(share.song or {})
         song_url = song.get("url") or share.link
         if is_char:
             title, icon = song.get("title") or T.CHARACTER_FALLBACK_TITLE.format(name=share.poster_name), "🎭"
@@ -902,7 +959,16 @@ class SunoFlow(commands.Cog):
 
         files: list[discord.File] = []
         adult = bool(song.get("nsfw"))          # 18+-tagged character cards: no art on the request card
-        if song.get("image_url") and not adult:
+        if song.get("unavailable"):
+            embed.add_field(name=T.CHARACTER_ABOUT_FIELD, value=T.COLLAB_CHARACTER_UNAVAILABLE, inline=False)
+        art = await self.character_art(song) if not adult else None
+        if art:
+            files = [art]
+            if from_music:
+                embed.set_image(url=f"attachment://{art.filename}")
+            else:
+                embed.set_thumbnail(url=f"attachment://{art.filename}")
+        elif song.get("image_url") and not adult:
             if from_music:
                 embed.set_image(url=song["image_url"])
             else:
@@ -917,7 +983,7 @@ class SunoFlow(commands.Cog):
         view.add_item(InterestedButton(share.post_id, share.selected))
         if song_url:
             view.add_item(ui.Button(label=listen_label(song, song_url), url=song_url))
-        view.add_item(ui.Button(label=T.COLLAB_ORIGINAL, url=share.jump_url))   # always link the original
+        view.add_item(ui.Button(label=T.COLLAB_ORIGINAL, url=original_url))   # always link the original
         content = T.COLLAB_CARD_HEADER.format(mention=user.mention)
 
         try:
@@ -925,15 +991,17 @@ class SunoFlow(commands.Cog):
                 cfg = db.get_config(share.guild_id)
                 channel = interaction.guild.get_channel(cfg.collab_channel_id) if cfg else None
                 if channel is None:
+                    if from_porch:
+                        return await tell(interaction, T.COLLAB_NO_CHANNEL)
                     return await self.update_panel(interaction, share, notice=T.COLLAB_NO_CHANNEL)
-                card = await channel.send(content, embed=embed, view=view)
+                card = await channel.send(content, embed=embed, view=view, files=files)
             else:
                 card = await self.put_card(share, content, embed, view, files)
         except discord.HTTPException as e:
             log.warning("Couldn't post collab card: %s", e)
             card = None
         if card is None:
-            if from_music:
+            if from_music and not from_porch:
                 return await self.update_panel(interaction, share, notice=T.COLLAB_FAILED)
             return await tell(interaction, T.COLLAB_FAILED)
 
@@ -941,16 +1009,22 @@ class SunoFlow(commands.Cog):
         if thread:
             try:
                 await thread.send(T.COLLAB_THREAD_INTRO.format(title=escape_markdown(title), mention=user.mention)
-                                  + "\n" + T.COLLAB_THREAD_ORIGINAL.format(url=share.jump_url),
+                                  + "\n" + T.COLLAB_THREAD_ORIGINAL.format(url=original_url),
                                   allowed_mentions=discord.AllowedMentions(users=[user]))
             except discord.HTTPException as e:
                 log.warning("Couldn't post in collab thread: %s", e)
 
         db.add_collab(card.id, share.guild_id, card.channel.id, share.post_id, share.selected,
                       share.poster_id, song.get("id"), [t[0] for t in types], note, None)
+        if song.get("stoop") and song.get("id"):
+            # Watch the card: if it's removed or becomes 18+, the request card loses its art and blurb.
+            db.add_stoop_ref(card.id, song["id"], share.guild_id, card.channel.id, "collab_card", False,
+                             state="stripped" if adult or song.get("unavailable") else "ok")
         db.update_share(share.post_id, status="kept")
         share = db.get_share(post_id)
-        if from_music:
+        if from_porch:
+            await tell(interaction, T.COLLAB_POSTED.format(url=card.jump_url))
+        elif from_music:
             await self.update_panel(interaction, share, notice=T.COLLAB_POSTED.format(url=card.jump_url))
             await self.refresh_public_reply(share)
         else:

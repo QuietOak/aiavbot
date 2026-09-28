@@ -92,6 +92,17 @@ Then, in the test server:
 
 `/aiav status` warns if the bot is missing any channel permissions and checks that Suno is reachable.
 
+**Character porch (optional):**
+
+```
+/aiav setup porch:#the-porch porch_18:#the-porch-after-dark mod_alerts:#mod-alerts
+/aiav settings stoop_feed:True stoop_feed_18:True
+```
+
+`porch_18` must be an **age-restricted** channel (channel settings → Age-Restricted Channel), or setup refuses it.
+`mod_alerts` is a private mod channel for 🚩 reports and heads-ups about removed characters.
+The arrival feeds need a Stoop partner key (see [The Stoop partner API](#the-stoop-partner-api-optional)).
+
 Optional:
 
 ```
@@ -117,6 +128,8 @@ If a forum requires tags, the bot can't post there. Turn that off or use a threa
 | Music | a music link: Suno, YouTube, Spotify, SoundCloud, Bandcamp, Apple Music, Udio, Tidal, Deezer, Audiomack | thanks them with **🚀 Enhance Sharing** (poster only: label it, start a conversation, collab request, join a theme) and **❤️ Like on Suno/YouTube/…** buttons anyone can use. Suno links show style and lyrics. Other sites show the title, artist/channel and cover when available. After the timeout, or "Just sharing", the reply shrinks to one line but keeps its buttons. |
 | Collab requests | anything new: an idea, image, Suno or other link | asks **🤝 Starting a collab?** Yes opens the collab form. The prompt becomes the request card with **🙋 I'm interested** and its own thread. **No** removes the prompt and privately, politely reminds them the channel is for collab requests, and that a thread or the lounge suits other posts. **Characters** (a Stoop/Chub/JanitorAI/... link or a PNG/JSON character card file) get *"🎭 Looks like a character!"* and character collab types: theme song, new art, animation, voice, story, roleplay, worldbuilding. |
 | Gallery | anything new | asks **✨ Is this a collab result?** Yes asks who they worked with (server members and/or anyone else by name), then posts a congratulations card with a comment thread. **No** removes the prompt and privately, politely reminds them the gallery is for collab results, and that a thread, the lounge or the music channel suits other work. |
+| Porch (SFW) | a character: a Stoop / Chub / JanitorAI / ... link, or a PNG/JSON character card file | replies with a character card: art, summary, creator, tags and **👋 Say hi** (a thread for the character), **✅ I met {name}!** (a count, plus an optional "how was it?" line in the thread), **🤝 Start a collab** (the character collab form; the request goes to collab requests) and **🚩 Report** (private note to the mods). With the Stoop key, the **arrival feed** also posts new SFW Stoop characters here. An 18+ character shared here shows only its name, a link and "🔞 18+ character". |
+| 18+ porch (age-restricted) | the same | the same, with 18+ characters shown in full. The 18+ arrival feed posts new 18+ Stoop characters here. Anything copied out of this channel (e.g. a collab request) shows only the name, a link and 🔞. |
 | Lounge | (nothing) | posts the **🌙 nightly update** at midnight with activity for the last day, 7 days and 30 days |
 | All of the above + theme channels | reactions on a post with a link, image, file or embed | counts them (shown in the nightly update) and cheers milestones: at **3, 10, 20, 30, 50** reactions it replies to the post, e.g. *"✨ Wow, … just hit 10 reactions! Go @Creator!"* (no ping) |
 
@@ -135,6 +148,26 @@ whole server. Milestone numbers and messages are in `texts.py` (`MILESTONES`, `M
 **Nightly update:** posted at midnight on the PC's clock. If the PC was off or asleep, it's posted when
 the bot starts, as long as it's before noon. `/aiav update` posts one right now.
 `/aiav settings nightly_update:False` turns it off.
+
+## The Stoop partner API (optional)
+
+The Stoop (FrontPorch AI's character hub) gave AIAVBOT a **read-only partner key**. It can't vote, download,
+comment, message or upload. It lets the bot:
+
+- post an **arrival card** for every new Stoop character (SFW in the porch, 18+ in the 18+ porch)
+- show full character cards for Stoop links: art, summary, creator (✅ verified), tags, downloads, mod pick
+- keep cards in sync: **edits** are applied in place (plus an "✨ updated v2 → v3" note in the Say-hi thread),
+  **removed** characters are hidden right away and tombstoned after 7 days, and characters that come back are restored
+- warn mods (in `mod_alerts`) when a character shared in an SFW channel is removed or becomes 18+
+
+Put the key in the bot's env file, never in the repo: `STOOP_API_KEY=pk_live_...` (the test bot and the live bot
+each have their own key). Without a key, the porch still works with the public link previews, just without the
+feed, the art or the syncing. `/aiav status` shows whether the key works, never the key itself.
+
+**Rating safety:** the key can see 18+ characters, so the bot checks every card's rating itself. 18+ art and text
+appear only in the age-restricted porch. The SFW feed asks The Stoop for SFW characters only, and checks again.
+
+Details: `AIAVBOT_Stoop_Integration_Plan.md`. Code: `stoop_api.py` (API client) and `porch.py` (the porch).
 
 ## 5. Try it
 
@@ -159,6 +192,8 @@ All member-facing text, collab types and response types are in **`texts.py`**. E
 | `admin.py` | `/aiav` admin commands |
 | `nightly.py` | The midnight lounge update |
 | `reactions.py` | Reaction counting and milestone shout-outs |
+| `porch.py` | The character porch: character cards, Say hi / I met / collab / report, the Stoop arrival feed and card syncing |
+| `stoop_api.py` | Read-only client for The Stoop partner API (paging, rate limits, images) |
 | `storage.py` | SQLite database |
 | `suno_fetch.py` | Reads song info from Suno (also runs alone: `python suno_fetch.py <link>`) |
 | `character_links.py` | Recognises character links (The Stoop, Chub, JanitorAI, ...) and reads PNG/JSON character card files. Add sites in `CHARACTER_SITES`. |
@@ -170,7 +205,8 @@ All member-facing text, collab types and response types are in **`texts.py`**. E
 
 ## Security
 
-- Never commit `.env`. It holds the bot token. `.gitignore` already excludes it, and `.env.example` is the blank template.
+- Never commit `.env`. It holds the bot token (and the Stoop key, if you use one). `.gitignore` already excludes it, and `.env.example` is the blank template.
+- If the Stoop key is ever exposed, tell The Stoop's developer so they can revoke it and issue a new one.
 - If the token is ever exposed (pushed, pasted or screenshotted), reset it right away: Developer Portal → Bot → **Reset Token**.
   Then update `.env`. The old token stops working immediately.
 - The database and logs live in `%LOCALAPPDATA%\AIAVBOT`, outside this folder, and are also ignored.

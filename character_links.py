@@ -8,7 +8,8 @@ character_links.py - Recognise shared AI characters and read their basic info.
 Two kinds of character shares:
 1. Links to character pages (The Stoop, Chub, JanitorAI, ...). We read the page's public
    link-preview tags (og:title / og:description / og:image), the same data Discord shows in its
-   own preview. The Stoop's API and search are closed to bots (robots.txt), so we use only card pages.
+   own preview. For The Stoop, the bot uses the official partner API instead when a key is set
+   (stoop_api.py); the link preview is only the fallback. We never scrape The Stoop's site or search.
 2. Character card files (PNG or JSON) in the V1/V2/V3 format used by SillyTavern, Chub, RisuAI,
    FrontPorch AI and others. The character data sits inside the file, so we read name, creator notes,
    tags and creator straight from it.
