@@ -275,7 +275,8 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
         milestone_channels="Where reactions are counted: AIAV channels only (default) or every channel",
         stoop_feed="Post new SFW Stoop characters in the porch (default off)",
         stoop_feed_18="Post new 18+ Stoop characters in the 18+ porch (default off)",
-        stoop_update_notes="Note character updates (v2 → v3) in their Say-hi threads (default on)",
+        stoop_update_notes="Note character updates (v2 → v3) in their conversation threads (default on)",
+        stoop_reports="Also send 🚩 reports about Stoop characters to The Stoop's moderators (default on)",
     )
     @app_commands.choices(milestone_channels=[
         app_commands.Choice(name="AIAV channels + theme channels", value="aiav"),
@@ -288,7 +289,8 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
                            milestone_channels: Optional[app_commands.Choice[str]] = None,
                            stoop_feed: Optional[bool] = None,
                            stoop_feed_18: Optional[bool] = None,
-                           stoop_update_notes: Optional[bool] = None) -> None:
+                           stoop_update_notes: Optional[bool] = None,
+                           stoop_reports: Optional[bool] = None) -> None:
         import stoop_api
         before = self.db.get_config(interaction.guild_id)
         if stoop_feed is not None:
@@ -303,6 +305,8 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
             self.db.set_stoop_settings(interaction.guild_id, **fields)
         if stoop_update_notes is not None:
             self.db.set_stoop_settings(interaction.guild_id, stoop_notes=stoop_update_notes)
+        if stoop_reports is not None:
+            self.db.set_stoop_settings(interaction.guild_id, stoop_reports=stoop_reports)
         if stoop_feed or stoop_feed_18:
             # Start the change feed at the same moment, so nothing created in the next few minutes is missed.
             for rating in ("sfw", "nsfw"):
@@ -324,12 +328,14 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
         feed = "on" if cfg and cfg.stoop_feed else "off"
         feed18 = "on" if cfg and cfg.stoop_feed18 else "off"
         notes = "on" if (cfg is None or cfg.stoop_notes) else "off"
+        sreports = "on" if (cfg is None or cfg.stoop_reports) else "off"
         porch_hint = "" if cfg and cfg.porch_channel_id else " (set a porch with `/aiav setup porch:`)"
         await reply(interaction,
             f"⏱️ Unused prompts are shortened (music) or removed (collab/gallery) after **{timeout} min**.\n"
             f"🌙 Nightly lounge update: **{nightly}**{lounge}\n"
             f"🏆 Reaction milestones: **{milestones}** ({scope})\n"
-            f"🎭 Stoop arrival feed: **{feed}**{porch_hint} · 18+ feed: **{feed18}** · update notes: **{notes}**")
+            f"🎭 Stoop arrival feed: **{feed}**{porch_hint} · 18+ feed: **{feed18}** · update notes: **{notes}**\n"
+            f"🚩 Reports also go to The Stoop's moderators: **{sreports}**")
 
     @app_commands.command(name="update", description="Post an AIAV Club activity update in the lounge now")
     async def update_cmd(self, interaction: discord.Interaction) -> None:
@@ -394,7 +400,8 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
         lines = [f"🎭 Porch: {fmt_channel(cfg.porch_channel_id)} · feed " + ("on" if cfg.stoop_feed else "off")
                  + f"  ·  🔞 18+ porch: {fmt_channel(cfg.porch18_channel_id)} · feed "
                  + ("on" if cfg.stoop_feed18 else "off"),
-                 f"🛡️ Mod alerts: {fmt_channel(cfg.mod_channel_id)}"]
+                 f"🛡️ Mod alerts: {fmt_channel(cfg.mod_channel_id)} · reports to The Stoop: "
+                 + ("on" if cfg.stoop_reports else "off")]
         if porch is None:
             return lines + ["🏡 The Stoop: porch module not loaded"]
         client = porch.client

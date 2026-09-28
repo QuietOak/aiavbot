@@ -128,7 +128,7 @@ If a forum requires tags, the bot can't post there. Turn that off or use a threa
 | Music | a music link: Suno, YouTube, Spotify, SoundCloud, Bandcamp, Apple Music, Udio, Tidal, Deezer, Audiomack | thanks them with **🚀 Enhance Sharing** (poster only: label it, start a conversation, collab request, join a theme) and **❤️ Like on Suno/YouTube/…** buttons anyone can use. Suno links show style and lyrics. Other sites show the title, artist/channel and cover when available. After the timeout, or "Just sharing", the reply shrinks to one line but keeps its buttons. |
 | Collab requests | anything new: an idea, image, Suno or other link | asks **🤝 Starting a collab?** Yes opens the collab form. The prompt becomes the request card with **🙋 I'm interested** and its own thread. **No** removes the prompt and privately, politely reminds them the channel is for collab requests, and that a thread or the lounge suits other posts. **Characters** (a Stoop/Chub/JanitorAI/... link or a PNG/JSON character card file) get *"🎭 Looks like a character!"* and character collab types: theme song, new art, animation, voice, story, roleplay, worldbuilding. |
 | Gallery | anything new | asks **✨ Is this a collab result?** Yes asks who they worked with (server members and/or anyone else by name), then posts a congratulations card with a comment thread. **No** removes the prompt and privately, politely reminds them the gallery is for collab results, and that a thread, the lounge or the music channel suits other work. |
-| Porch (SFW) | a character: a Stoop / Chub / JanitorAI / ... link, or a PNG/JSON character card file | replies with a character card: art, summary, creator, tags and **👋 Say hi** (a thread for the character), **✅ I met {name}!** (a count, plus an optional "how was it?" line in the thread), **🤝 Start a collab** (the character collab form; the request goes to collab requests) and **🚩 Report** (private note to the mods). With the Stoop key, the **arrival feed** also posts new SFW Stoop characters here. An 18+ character shared here shows only its name, a link and "🔞 18+ character". |
+| Porch (SFW) | a character: a Stoop / Chub / JanitorAI / ... link, or a PNG/JSON character card file | replies with a character card: art, summary, creator, tags and **🧵 Start a thread** (a conversation thread for the character), **💜 I'm interested in this card** (a count, plus an optional comment in the thread), **🤝 Start a collab** (the character collab form; the request goes to collab requests) and **🚩 Report** (private note to the mods; for Stoop characters also to The Stoop's moderators, without the reporter's name). With the Stoop key, the **arrival feed** also posts new SFW Stoop characters here. An 18+ character shared here shows only its name, a link and "🔞 18+ character". |
 | 18+ porch (age-restricted) | the same | the same, with 18+ characters shown in full. The 18+ arrival feed posts new 18+ Stoop characters here. Anything copied out of this channel (e.g. a collab request) shows only the name, a link and 🔞. |
 | Lounge | (nothing) | posts the **🌙 nightly update** at midnight with activity for the last day, 7 days and 30 days |
 | All of the above + theme channels | reactions on a post with a link, image, file or embed | counts them (shown in the nightly update) and cheers milestones: at **3, 10, 20, 30, 50** reactions it replies to the post, e.g. *"✨ Wow, … just hit 10 reactions! Go @Creator!"* (no ping) |
@@ -157,7 +157,7 @@ comment, message or upload. It lets the bot:
 - post an **arrival card** for every new Stoop character (SFW in the porch, 18+ in the 18+ porch)
 - show full character cards for Stoop links: art, summary, tags, "by {creator} on The Stoop" (linked to their profile,
   with their hub badge), original-creator credit, score, downloads, Mod's Pick, token count and a **Download on The Stoop** button
-- keep cards in sync: **edits** are applied in place (plus an "✨ updated v2 → v3" note in the Say-hi thread),
+- keep cards in sync: **edits** are applied in place (plus an "✨ updated v2 → v3" note in the character's thread),
   **removed** characters are hidden right away and tombstoned after 7 days, and characters that come back are restored
 - warn mods (in `mod_alerts`) when a character shared in an SFW channel is removed or becomes 18+
 
@@ -193,7 +193,7 @@ All member-facing text, collab types and response types are in **`texts.py`**. E
 | `admin.py` | `/aiav` admin commands |
 | `nightly.py` | The midnight lounge update |
 | `reactions.py` | Reaction counting and milestone shout-outs |
-| `porch.py` | The character porch: character cards, Say hi / I met / collab / report, the Stoop arrival feed and card syncing |
+| `porch.py` | The character porch: character cards, thread / interested / collab / report (incl. to The Stoop's moderators), the Stoop arrival feed and card syncing |
 | `stoop_api.py` | Read-only client for The Stoop partner API (paging, rate limits, images) |
 | `storage.py` | SQLite database |
 | `suno_fetch.py` | Reads song info from Suno (also runs alone: `python suno_fetch.py <link>`) |

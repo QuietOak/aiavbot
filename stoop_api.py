@@ -49,6 +49,27 @@ RATE_LIMIT_PAUSE = 60          # seconds to pause after a 429
 TIMEOUT = aiohttp.ClientTimeout(total=20)
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
+# Reports to The Stoop's moderators (confirmed by the developer, 2026-09-28):
+#   POST /partner/reports  {"characterId": <card UUID>, "category": <category>, "reason": <text>}
+#   201 {"ok": true, "id": ...} · 400 invalid_input / reason_required · 403 reports_disabled
+#   404 not_reportable · 409 already_reported (one open report per card per key)
+# The member route POST /reports rejects partner keys. Categories are case-insensitive.
+REPORT_PATH = "/partner/reports"
+REPORT_CARD_FIELD = "characterId"
+REPORT_REASON_MAX = 500          # trimmed; longer returns 400 reason_required
+# Our report reasons (texts.PORCH_REPORT_REASONS) -> The Stoop's categories. None = Dreamers mods only.
+REPORT_CATEGORIES: dict[str, Optional[str]] = {
+    "minor": "ILLEGAL",          # jumps The Stoop's queue
+    "real": "real_person",
+    "stolen": "STOLEN",
+    "rating": "MISLABELED",
+    "image": "PROHIBITED_IMAGE",
+    "spam": "SPAM",
+    "low_effort": "LOW_EFFORT",
+    "other": "OTHER",
+    "rules": None,               # our server's rules aren't The Stoop's business
+}
+
 UUID_RE = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 CARD_LINK_RE = re.compile(rf"https?://(?:www\.)?hub\.frontporchai\.app/card/({UUID_RE})", re.I)
 
@@ -80,6 +101,16 @@ class StoopDisabled(StoopError):
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+
+def error_code(body: Optional[str]) -> Optional[str]:
+    """The API's {"error": "..."} code from an error body, if any."""
+    import json
+    try:
+        data = json.loads(body or "")
+    except ValueError:
+        return None
+    return data.get("error") if isinstance(data, dict) else None
+
 
 def card_url(card_id: str) -> str:
     return HUB_CARD_URL.format(id=card_id)
@@ -237,6 +268,10 @@ class StoopClient:
     async def _get(self, path: str, params: Optional[dict] = None, *, want: str = "json"):
         """GET a path. Returns parsed JSON (want='json') or (bytes, content_type) (want='bytes').
         Returns None on 404. Raises StoopError for everything else that isn't a 200."""
+        return await self._request("GET", path, params=params, want=want)
+
+    async def _request(self, method: str, path: str, *, params: Optional[dict] = None,
+                       json_body: Optional[dict] = None, want: str = "json"):
         if not self.enabled:
             raise StoopDisabled("STOOP_API_KEY is not set")
         if self._session is None:
@@ -244,16 +279,22 @@ class StoopClient:
         await self._wait_turn()
         headers = {"Authorization": f"Bearer {self._key}", "User-Agent": USER_AGENT,
                    "Accept": "application/json" if want == "json" else "image/*"}
+        ok_statuses = (200,) if method == "GET" else (200, 201, 202, 204)
         try:
-            async with self._session.get(self.base + path, params=params, headers=headers) as resp:
+            async with self._session.request(method, self.base + path, params=params, json=json_body,
+                                             headers=headers) as resp:
                 status = resp.status
-                if status == 200:
+                if status in ok_statuses:
                     if want == "json":
-                        try:
-                            data = await resp.json(content_type=None)
-                        except ValueError:
-                            self._note_error("bad JSON")
-                            raise StoopError(f"unreadable reply on {path}", status) from None
+                        raw = await resp.read()
+                        if not raw.strip():
+                            data = {}
+                        else:
+                            try:
+                                data = await resp.json(content_type=None)
+                            except ValueError:
+                                self._note_error("bad JSON")
+                                raise StoopError(f"unreadable reply on {path}", status) from None
                     else:
                         body = bytearray()
                         async for chunk in resp.content.iter_chunked(64 * 1024):
@@ -282,7 +323,9 @@ class StoopClient:
             log.warning("The Stoop API rate limit hit; pausing all calls for %ds", self.pause_seconds)
             raise StoopRateLimited("rate limited", 429)
         self._note_error(f"HTTP {status}")
-        raise StoopError(self._redact(f"HTTP {status} on {path}: {text}"), status)
+        err = StoopError(self._redact(f"HTTP {status} on {path}: {text}"), status)
+        err.body = self._redact(text)
+        raise err
 
     def _note_error(self, text: str) -> None:
         self.last_error = text
@@ -327,6 +370,25 @@ class StoopClient:
         """(bytes, content_type) for an asset, or None if it's gone (a new picture has a new id)."""
         return await self._get(f"/partner/assets/{asset_id}/raw", {"v": "thumb"} if thumb else None,
                                want="bytes")
+
+    async def report(self, card_id: str, category: str, reason: str) -> tuple[str, Optional[str]]:
+        """Send a report to The Stoop's moderation queue. Returns (outcome, detail):
+        ("sent", report id) · ("already", None) one is already open for this card from our key ·
+        ("not_reportable", None) · ("disabled", None) reports switched off for our key.
+        Raises StoopError for anything else (e.g. 400 invalid_input)."""
+        body = {REPORT_CARD_FIELD: card_id, "category": category, "reason": reason.strip()[:REPORT_REASON_MAX]}
+        try:
+            data = await self._request("POST", REPORT_PATH, json_body=body)
+        except StoopError as e:
+            code = error_code(getattr(e, "body", None))
+            if e.status == 409 or code == "already_reported":
+                return "already", None
+            if e.status == 403 or code == "reports_disabled":
+                return "disabled", None
+            raise
+        if data is None:                        # 404 not_reportable
+            return "not_reportable", None
+        return "sent", str(data.get("id")) if isinstance(data, dict) and data.get("id") else None
 
     async def stats(self) -> Optional[dict]:
         data = await self._get("/partner/stats")

@@ -306,9 +306,9 @@ PORCH_SCORE = "⭐ {n:,} score"                 # upvotes minus downvotes (can b
 PORCH_TOKENS = "🧮 ~{n:,} tokens"
 PORCH_VERSION = "v{n}"
 PORCH_TYPES = {"SOLO": "👤 Solo", "GROUP": "👥 Group", "WORLD": "🗺️ World"}
-PORCH_MET_NONE = "Chatted with {name}? Tap ✅ I met {name}!"
-PORCH_MET_ONE = "✅ 1 Dreamer has met {name}"
-PORCH_MET_MANY = "✅ {n} Dreamers have met {name}"
+PORCH_MET_NONE = "Like {name}? Tap 💜 I'm interested in this card!"
+PORCH_MET_ONE = "💜 1 Dreamer is interested in {name}"
+PORCH_MET_MANY = "💜 {n} Dreamers are interested in {name}"
 
 # 18+ characters outside the age-restricted porch: name + link only.
 PORCH_ADULT_TITLE = "🔞 {name}"
@@ -322,24 +322,26 @@ PORCH_GONE_THREAD = "🚪 {name} has left the porch. Thanks for all the hellos! 
 PORCH_UNAVAILABLE_LINK = "🚪 That character isn't available on {site} right now (it may be getting an update). Try again later!"
 
 # Buttons on porch cards
-PORCH_BTN_HI = "👋 Say hi"
-PORCH_BTN_MET = "✅ I met {name}!"
+PORCH_BTN_HI = "🧵 Start a thread"
+PORCH_BTN_HI_OPEN = "🧵 Join the conversation"      # once the thread exists
+PORCH_BTN_MET = "💜 I'm interested in this card"
 PORCH_BTN_COLLAB = "🤝 Start a collab"
 PORCH_BTN_REPORT = "🚩 Report"
 PORCH_BTN_OPEN = "⬇️ Open on {site}"
 
-PORCH_HI_THREAD = "👋 {name}"
-PORCH_HI_INTRO = "👋 This is the place to say hi to **{name}**{by}! Played a scene, loved a line, have ideas? Share it here."
+PORCH_HI_THREAD = "💬 {name}"
+PORCH_HI_INTRO = ("💬 A place to talk about **{name}**{by}! Share scenes you've played, favourite lines, "
+                  "art or music ideas, and questions for the creator.")
 PORCH_HI_BY = " by {creator}"
-PORCH_HI_DONE = "Here's {name}'s thread: {url} 👋"
-PORCH_MET_DONE = "Thanks for letting everyone know! 💛 Want to tell others how it went?"
-PORCH_MET_AGAIN = "You've already said you met {name}. 💛"
-PORCH_MET_TELL = "💬 Say how it went"
-PORCH_HOW_TITLE = "How was it?"
-PORCH_HOW_LABEL = "A line about your time with them"
-PORCH_HOW_PLACEHOLDER = "e.g. She forecast my love life. Still no rain."
-PORCH_HOW_POST = "💬 **{user}** met **{name}**: “{text}”"
-PORCH_HOW_DONE = "Posted in {name}'s thread: {url} 💬"
+PORCH_HI_DONE = "Here's the conversation about {name}: {url} 🧵"
+PORCH_MET_DONE = "Noted! 💜 Want to leave a comment for others in its thread?"
+PORCH_MET_AGAIN = "You've already said you're interested in {name}. 💜"
+PORCH_MET_TELL = "💬 Leave a comment"
+PORCH_HOW_TITLE = "Leave a comment"
+PORCH_HOW_LABEL = "What caught your eye?"
+PORCH_HOW_PLACEHOLDER = "e.g. Love the storm-chaser idea, can't wait to try her"
+PORCH_HOW_POST = "💜 **{user}** is interested in **{name}**: “{text}”"
+PORCH_HOW_DONE = "Posted in the conversation about {name}: {url} 💬"
 PORCH_CARD_GONE = "This character card isn't available anymore."
 PORCH_STALE = "This character isn't available right now."
 PORCH_ADULT_BUTTONS = "This is an 18+ character, so say hi and collab from the 18+ porch. 🔞"
@@ -352,11 +354,24 @@ PORCH_REPORT_REASONS = [
     ("real", "Based on a real person", "🧍"),
     ("stolen", "Stolen / not the creator's", "🕵️"),
     ("rating", "Wrong rating (should be 18+)", "🔞"),
+    ("image", "Prohibited image", "🖼️"),
+    ("spam", "Spam", "📢"),
+    ("low_effort", "Low effort", "🥱"),
     ("other", "Something else", "❓"),
 ]
 PORCH_REPORT_DETAILS = "Details (optional)"
 PORCH_REPORT_PLACEHOLDER = "Anything the mods should know"
 PORCH_REPORT_DONE = "Thanks. The mods have been told privately. 🛡️"
+PORCH_REPORT_DONE_STOOP = "Thanks. Our mods and The Stoop's moderators have both been told privately. 🛡️"
+PORCH_REPORT_AGAIN = "You've already reported this character. The mods have it, thank you. 🛡️"
+PORCH_REPORT_LIMIT = "You've sent a lot of reports today. Please message a moderator directly if something else needs attention."
+PORCH_REPORT_NOTE = "Reports about Stoop characters also go to The Stoop's own moderators (without your name)."
+PORCH_REPORT_STOOP_SENT = "📨 Also sent to The Stoop's moderators."
+PORCH_REPORT_STOOP_URGENT = "📨 Also sent to The Stoop's moderators (marked urgent)."
+PORCH_REPORT_STOOP_ALREADY = "📨 The Stoop's moderators already have an open report for this character from us."
+PORCH_REPORT_STOOP_FAILED = "⚠️ Couldn't send to The Stoop's moderators ({why}). Forward it if needed."
+PORCH_REPORT_STOOP_SKIPPED = "ℹ️ Not sent to The Stoop ({why})."
+STOOP_REPORT_REASON = "{reason}. {details}Reported by a member of the Dreamers AI Discord."
 PORCH_REPORT_NO_CHANNEL = ("Thanks. I couldn't reach the mods automatically, so please message a moderator "
                            "with a link to the card.")
 PORCH_REPORT_HEADER = "🚩 **Character report**"
@@ -372,7 +387,7 @@ PORCH_STAT_TITLE = "🎭 Characters"
 PORCH_STAT_LABELS = [
     ("porch_arrival", "new arrivals"),
     ("porch_share", "shared"),
-    ("porch_hi", "say-hi threads"),
-    ("porch_met", "'I met'"),
+    ("porch_hi", "threads"),
+    ("porch_met", "'interested'"),
 ]
 PORCH_STOOP_TOTAL = "The Stoop: {total:,} characters"

@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS porch_posts (
     poster_id     INTEGER,                       -- the member who shared it (share)
     stoop_id      TEXT,                          -- Stoop card id, if it's a Stoop character
     info          TEXT,                          -- character dict (JSON) for non-Stoop characters
-    thread_id     INTEGER,                       -- the Say-hi thread
+    thread_id     INTEGER,                       -- the card's conversation thread
     state         TEXT NOT NULL DEFAULT 'full',  -- full | adult | missing | gone
     shown_version INTEGER,
     shown_asset   TEXT,
@@ -245,7 +245,8 @@ class GuildConfig:
     mod_channel_id: Optional[int] = None
     stoop_feed: int = 0              # SFW arrival feed in the SFW porch
     stoop_feed18: int = 0            # 18+ arrival feed in the age-restricted porch
-    stoop_notes: int = 1             # "✨ got an update" notes in Say-hi threads
+    stoop_notes: int = 1             # "✨ got an update" notes in conversation threads
+    stoop_reports: int = 1           # also send 🚩 reports about Stoop characters to The Stoop's moderators
     stoop_feed_since: Optional[str] = None     # ISO time the SFW feed was turned on (no backlog before it)
     stoop_feed18_since: Optional[str] = None
 
@@ -341,9 +342,13 @@ class Storage:
         for col, ddl in (("porch_channel_id", "INTEGER"), ("porch18_channel_id", "INTEGER"),
                          ("mod_channel_id", "INTEGER"), ("stoop_feed", "INTEGER NOT NULL DEFAULT 0"),
                          ("stoop_feed18", "INTEGER NOT NULL DEFAULT 0"), ("stoop_notes", "INTEGER NOT NULL DEFAULT 1"),
-                         ("stoop_feed_since", "TEXT"), ("stoop_feed18_since", "TEXT")):
+                         ("stoop_feed_since", "TEXT"), ("stoop_feed18_since", "TEXT"),
+                         ("stoop_reports", "INTEGER NOT NULL DEFAULT 1")):
             if col not in cols:
                 self.conn.execute(f"ALTER TABLE guild_config ADD COLUMN {col} {ddl}")
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(porch_reports)")}
+        if "stoop_status" not in cols:
+            self.conn.execute("ALTER TABLE porch_reports ADD COLUMN stoop_status TEXT")
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(shares)")}
         if "kind" not in cols:
             self.conn.execute("ALTER TABLE shares ADD COLUMN kind TEXT NOT NULL DEFAULT 'music'")
@@ -390,7 +395,8 @@ class Storage:
 
     def set_stoop_settings(self, guild_id: int, **fields) -> None:
         """stoop_feed, stoop_feed18, stoop_notes, stoop_feed_since, stoop_feed18_since."""
-        allowed = {"stoop_feed", "stoop_feed18", "stoop_notes", "stoop_feed_since", "stoop_feed18_since"}
+        allowed = {"stoop_feed", "stoop_feed18", "stoop_notes", "stoop_feed_since", "stoop_feed18_since",
+                   "stoop_reports"}
         self._exec("INSERT OR IGNORE INTO guild_config (guild_id) VALUES (?)", (guild_id,))
         for k, v in fields.items():
             if k not in allowed:
@@ -725,6 +731,9 @@ class Storage:
         return [self._porch(r) for r in self.conn.execute(
             "SELECT * FROM porch_posts WHERE channel_id=?", (channel_id,))]
 
+    def all_porch_posts(self) -> list[dict]:
+        return [self._porch(r) for r in self.conn.execute("SELECT * FROM porch_posts ORDER BY created_at")]
+
     def adult_porch_posts(self) -> list[dict]:
         return [self._porch(r) for r in self.conn.execute(
             "SELECT * FROM porch_posts WHERE adult_ok=1 AND state='full'")]
@@ -821,6 +830,20 @@ class Storage:
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (guild_id, message_id, card_key, reporter_id, reason, details, time.time()))
         return cur.lastrowid
+
+    def report_exists(self, card_key: str, guild_id: int, reporter_id: int) -> bool:
+        return self.conn.execute(
+            "SELECT 1 FROM porch_reports WHERE card_key=? AND guild_id=? AND reporter_id=? LIMIT 1",
+            (card_key, guild_id, reporter_id)).fetchone() is not None
+
+    def reports_since(self, guild_id: int, reporter_id: int, since: float) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) n FROM porch_reports WHERE guild_id=? AND reporter_id=? AND created_at>=?",
+            (guild_id, reporter_id, since)).fetchone()
+        return row["n"] if row else 0
+
+    def set_report_stoop_status(self, report_id: int, status: str) -> None:
+        self._exec("UPDATE porch_reports SET stoop_status=? WHERE id=?", (status, report_id))
 
     def porch_counts(self) -> dict:
         row = self.conn.execute(

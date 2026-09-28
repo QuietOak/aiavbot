@@ -11,7 +11,7 @@ Two channels, set with /aiav setup:
 
 What happens:
   - A member shares a character (Stoop / Chub / JanitorAI / ... link, or a PNG/JSON card file)
-    -> the bot replies with a card: art, summary, creator, tags + 👋 Say hi · ✅ I met · 🤝 Start a collab · 🚩 Report.
+    -> the bot replies with a card: art, summary, creator, tags + 🧵 Start a thread · 💜 I'm interested · 🤝 Start a collab · 🚩 Report.
   - Arrival feed (off by default): new Stoop characters get an arrival card.
   - Stoop cards stay in sync: edits are applied in place, removed cards are hidden, and they're restored if
     they come back (see AIAVBOT_Stoop_Integration_Plan.md, section 5).
@@ -61,6 +61,8 @@ GONE_AFTER = 7 * 86400            # 404 for this long -> tombstone
 STATS_EDIT_EVERY = 6 * 3600       # stats-only edits (downloads, mod pick) at most this often
 MAX_ARRIVALS_PER_POLL = 5         # per channel; the rest wait for the next poll
 STALE_SINCE = 2 * 86400           # a watermark older than this restarts from now (no huge catch-up)
+REPORTS_PER_DAY = 10              # per member, so one person can't flood either mod queue
+RENDER_VERSION = "2"              # bump when card wording/buttons change: existing cards are redrawn once
 
 
 # --------------------------------------------------------------------------- #
@@ -96,7 +98,7 @@ async def ack(interaction: discord.Interaction) -> None:
 
 
 def card_key(post: dict) -> str:
-    """What 'I met' counts are stored against: the Stoop id, or the porch card's message for other sites."""
+    """What 💜 interest counts are stored against: the Stoop id, or the porch card's message for other sites."""
     return post["stoop_id"] or f"m{post['message_id']}"
 
 
@@ -111,6 +113,17 @@ def neutral_placeholder(preview: dict, stoop_id: str) -> dict:
     info.update(id=stoop_id, url=stoop_api.card_url(stoop_id), site="The Stoop", description=None, tags=[],
                 image_url=None, stoop=True, stoop_asset=None, unverified=True)
     return info
+
+
+def stoop_report_reason(label: str, details: Optional[str]) -> str:
+    """The reason text for The Stoop: our reason, the member's details, and where it came from. Never the
+    reporter's name. Kept within The Stoop's 500-character limit by shortening the details."""
+    tail = T.STOOP_REPORT_REASON.format(reason=label, details="")
+    room = stoop_api.REPORT_REASON_MAX - len(tail) - 1
+    extra = " ".join((details or "").split())
+    if extra:
+        extra = (extra if len(extra) <= room else extra[: max(0, room - 1)].rstrip() + "…") + " "
+    return T.STOOP_REPORT_REASON.format(reason=label, details=extra).strip()
 
 
 def stoop_key_from_env() -> Optional[str]:
@@ -148,7 +161,7 @@ def desired_state(char: dict, adult_ok: bool) -> str:
 def render_card(char: dict, *, state: str, kind: str, message_id: int, met: int,
                 stoop: Optional[dict] = None, poster_name: Optional[str] = None,
                 image_name: Optional[str] = None, porch18_id: Optional[int] = None,
-                big_image: bool = True) -> tuple[Optional[str], discord.Embed, Optional[ui.View]]:
+                big_image: bool = True, has_thread: bool = False) -> tuple[Optional[str], discord.Embed, Optional[ui.View]]:
     """(content, embed, view) for a porch card.
 
     char   character dict (stoop_api.to_character_info or character_links); name in "title"
@@ -219,8 +232,8 @@ def render_card(char: dict, *, state: str, kind: str, message_id: int, met: int,
     embed.set_footer(text=short(footer, 200))
 
     view = ui.View(timeout=None)
-    view.add_item(PorchButton("hi", message_id))
-    view.add_item(PorchButton("met", message_id, name))
+    view.add_item(PorchButton("hi", message_id, T.PORCH_BTN_HI_OPEN if has_thread else None))
+    view.add_item(PorchButton("met", message_id))
     view.add_item(PorchButton("collab", message_id))
     view.add_item(PorchButton("report", message_id))
     if url and len(url) <= 512:
@@ -241,9 +254,11 @@ class PorchButton(ui.DynamicItem[ui.Button], template=r"porch:(?P<action>hi|met|
     STYLES = {"hi": discord.ButtonStyle.primary, "met": discord.ButtonStyle.success,
               "collab": discord.ButtonStyle.secondary, "report": discord.ButtonStyle.secondary}
 
-    def __init__(self, action: str, mid: int, name: str = ""):
-        label = {"hi": T.PORCH_BTN_HI, "met": T.PORCH_BTN_MET.format(name=name or "them"),
-                 "collab": T.PORCH_BTN_COLLAB, "report": T.PORCH_BTN_REPORT}[action]
+    # "hi" = 🧵 Start a thread, "met" = 💜 I'm interested in this card. The ids stay the same so cards
+    # posted by older versions keep working.
+    def __init__(self, action: str, mid: int, label: Optional[str] = None):
+        label = label or {"hi": T.PORCH_BTN_HI, "met": T.PORCH_BTN_MET,
+                          "collab": T.PORCH_BTN_COLLAB, "report": T.PORCH_BTN_REPORT}[action]
         super().__init__(ui.Button(label=short(label, 80), style=self.STYLES[action],
                                    custom_id=f"porch:{action}:{mid}"))
         self.action, self.mid = action, mid
@@ -284,7 +299,9 @@ class ReportModal(ui.Modal):
         self.reason = ui.Select(options=[discord.SelectOption(label=label, value=value, emoji=emoji)
                                          for value, label, emoji in T.PORCH_REPORT_REASONS],
                                 min_values=1, max_values=1, required=True)
-        self.add_item(ui.Label(text=T.PORCH_REPORT_REASON, component=self.reason))
+        self.add_item(ui.Label(text=T.PORCH_REPORT_REASON,
+                               description=T.PORCH_REPORT_NOTE if post["stoop_id"] else None,
+                               component=self.reason))
         self.details = ui.TextInput(style=discord.TextStyle.paragraph, placeholder=T.PORCH_REPORT_PLACEHOLDER,
                                     max_length=800, required=False)
         self.add_item(ui.Label(text=T.PORCH_REPORT_DETAILS, component=self.details))
@@ -317,7 +334,7 @@ class HowWasItModal(ui.Modal):
 
 
 class HowWasItView(ui.View):
-    """Private follow-up after 'I met': one button that opens the How-was-it form."""
+    """Private follow-up after 💜 I'm interested: one button that opens the comment form."""
 
     def __init__(self, porch: "Porch", mid: int):
         super().__init__(timeout=600)
@@ -591,7 +608,7 @@ class Porch(commands.Cog):
         self.db.log(post["guild_id"], post["message_id"], interaction.user.id, "porch_hi")
 
     async def hi_thread(self, post: dict, char: Optional[dict]) -> Optional[discord.Thread]:
-        """The card's Say-hi thread, created (with an intro) the first time."""
+        """The card's conversation thread, created (with an intro) the first time."""
         channel = self.bot.get_channel(post["channel_id"])
         if channel is None:
             return None
@@ -618,8 +635,11 @@ class Porch(commands.Cog):
                 await thread.send(T.PORCH_HI_INTRO.format(name=escape_markdown(name), by=by),
                                   allowed_mentions=discord.AllowedMentions.none())
             except discord.HTTPException as e:
-                log.warning("Couldn't post Say-hi intro: %s", e)
+                log.warning("Couldn't post thread intro: %s", e)
             self.db.update_porch_post(post["message_id"], thread_id=thread.id)
+            fresh = self.db.porch_post(post["message_id"])
+            if fresh:
+                await self.render_post(fresh, stats_only=True, force=True)   # button: "Join the conversation"
         return thread
 
     async def met(self, interaction: discord.Interaction, post: dict) -> None:
@@ -679,10 +699,19 @@ class Porch(commands.Cog):
         post = self.db.porch_post(mid)
         if not post:
             return await tell(interaction, T.PORCH_CARD_GONE)
+        user = interaction.user
+        if self.db.report_exists(card_key(post), post["guild_id"], user.id):
+            return await tell(interaction, T.PORCH_REPORT_AGAIN)
+        if self.db.reports_since(post["guild_id"], user.id, time.time() - 86400) >= REPORTS_PER_DAY:
+            return await tell(interaction, T.PORCH_REPORT_LIMIT)
         char, _ = self.char_for_post(post)
         name = (char or {}).get("title") or "Unknown character"
-        self.db.add_report(post["guild_id"], mid, card_key(post), interaction.user.id, reason, details)
+        report_id = self.db.add_report(post["guild_id"], mid, card_key(post), user.id, reason, details)
         reason_label = next((f"{e} {label}" for v, label, e in T.PORCH_REPORT_REASONS if v == reason), reason)
+
+        # The Stoop's own moderators (POST /partner/reports), for Stoop characters and Stoop-relevant reasons.
+        stoop_line, stoop_sent = await self._report_to_stoop(post, reason, details, report_id)
+
         lines = [T.PORCH_REPORT_HEADER,
                  f"**Character:** {escape_markdown(name)}" + (" 🔞" if (char or {}).get("nsfw") else ""),
                  f"**Card:** {jump(post['guild_id'], post['channel_id'], mid)}"]
@@ -693,10 +722,54 @@ class Porch(commands.Cog):
         lines.append(f"**Reason:** {reason_label}")
         if details:
             lines.append("**Details:** " + short(escape_markdown(details), 800))
-        lines.append(f"**Reported by:** {interaction.user.mention}")
+        lines.append(f"**Reported by:** {user.mention}")
+        if stoop_line:
+            lines.append(stoop_line)
         sent = await self.alert_mods(post["guild_id"], "\n".join(lines))
-        await tell(interaction, T.PORCH_REPORT_DONE if sent else T.PORCH_REPORT_NO_CHANNEL)
-        self.db.log(post["guild_id"], mid, interaction.user.id, "porch_report")
+        if stoop_sent:
+            await tell(interaction, T.PORCH_REPORT_DONE_STOOP)
+        else:
+            await tell(interaction, T.PORCH_REPORT_DONE if sent else T.PORCH_REPORT_NO_CHANNEL)
+        self.db.log(post["guild_id"], mid, user.id, "porch_report")
+
+    async def _report_to_stoop(self, post: dict, reason: str, details: Optional[str],
+                               report_id: int) -> tuple[Optional[str], bool]:
+        """(line for the mod message, sent?) Never includes the member's name or Discord id."""
+        if not post["stoop_id"]:
+            return None, False
+        cfg = self.db.get_config(post["guild_id"])
+        category = stoop_api.REPORT_CATEGORIES.get(reason)
+        why_not = None
+        if not self.client.enabled:
+            why_not = "no Stoop key"
+        elif cfg and not cfg.stoop_reports:
+            why_not = "turned off in /aiav settings"
+        elif category is None:
+            why_not = "a Dreamers rule, not a Stoop one"
+        if why_not:
+            self.db.set_report_stoop_status(report_id, f"skipped: {why_not}")
+            return T.PORCH_REPORT_STOOP_SKIPPED.format(why=why_not), False
+        label = next((lbl for v, lbl, _ in T.PORCH_REPORT_REASONS if v == reason), reason)
+        text = stoop_report_reason(label, details)
+        try:
+            outcome, stoop_id = await self.client.report(post["stoop_id"], category, text)
+        except StoopError as e:
+            code = stoop_api.error_code(getattr(e, "body", None))
+            why = f"HTTP {e.status}" + (f" {code}" if code else "") if e.status else "couldn't reach it"
+            log.warning("Stoop report failed: %s", e)
+            self.db.set_report_stoop_status(report_id, f"failed: {why}")
+            return T.PORCH_REPORT_STOOP_FAILED.format(why=short(why, 120)), False
+        if outcome == "already":
+            self.db.set_report_stoop_status(report_id, "already reported")
+            return T.PORCH_REPORT_STOOP_ALREADY, True
+        if outcome in ("not_reportable", "disabled"):
+            why = ("The Stoop can't take a report for this card" if outcome == "not_reportable"
+                   else "The Stoop has paused partner reports")
+            self.db.set_report_stoop_status(report_id, f"not sent: {outcome}")
+            return T.PORCH_REPORT_STOOP_FAILED.format(why=why), False
+        self.db.set_report_stoop_status(report_id, f"sent: {stoop_id or '?'}")
+        log.info("Report sent to The Stoop's moderators (card %s, %s)", post["stoop_id"], category)
+        return (T.PORCH_REPORT_STOOP_URGENT if category == "ILLEGAL" else T.PORCH_REPORT_STOOP_SENT), True
 
     async def alert_mods(self, guild_id: int, text: str) -> bool:
         cfg = self.db.get_config(guild_id)
@@ -750,7 +823,8 @@ class Porch(commands.Cog):
             char or {}, state=state, kind=post["kind"], message_id=post["message_id"],
             met=self.db.met_count(card_key(post), post["guild_id"]), stoop=stoop,
             poster_name=self._poster_name(channel, post), image_name=image_name,
-            porch18_id=cfg.porch18_channel_id if cfg else None, big_image=post["kind"] == "arrival")
+            porch18_id=cfg.porch18_channel_id if cfg else None, big_image=post["kind"] == "arrival",
+            has_thread=bool(post["thread_id"]))
         kwargs = {"content": content, "embed": embed, "view": view}
         if not stats_only:
             kwargs["attachments"] = files          # replaces (or removes) the art
@@ -1015,8 +1089,17 @@ class Porch(commands.Cog):
             except discord.HTTPException as e:
                 log.warning("Couldn't add arrival buttons: %s", e)
 
+    async def redraw_if_wording_changed(self) -> None:
+        """Cards posted by an older version get the current labels and wording (once per version)."""
+        if self.db.kv_get("porch_render_version") == RENDER_VERSION:
+            return
+        for post in self.db.all_porch_posts():
+            await self.render_post(post, stats_only=True, force=True)
+        self.db.kv_set("porch_render_version", RENDER_VERSION)
+
     async def recheck_once(self) -> None:
         """Detail-check cards the bot shows, to notice removals. Tombstone long-missing ones."""
+        await self.redraw_if_wording_changed()
         if not self.client.enabled or self.client.unauthorized:
             return
         now = time.time()
