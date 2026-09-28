@@ -368,7 +368,8 @@ class Storage:
             return None
         d = dict(row)
         d["mod_role_ids"] = json.loads(d["mod_role_ids"]) if d.get("mod_role_ids") else []
-        return GuildConfig(**d)
+        # Ignore columns this version doesn't know (e.g. after rolling the code back), instead of crashing.
+        return GuildConfig(**{k: v for k, v in d.items() if k in GuildConfig.__dataclass_fields__})
 
     def set_mod_roles(self, guild_id: int, role_ids: list[int]) -> None:
         self._exec("INSERT OR IGNORE INTO guild_config (guild_id) VALUES (?)", (guild_id,))
@@ -490,7 +491,7 @@ class Storage:
         d = dict(row)
         d["links"] = json.loads(d["links"])
         d["songs"] = json.loads(d["songs"]) if d["songs"] else None
-        return Share(**d)
+        return Share(**{k: v for k, v in d.items() if k in Share.__dataclass_fields__})
 
     def update_share(self, post_id: int, **fields) -> None:
         allowed = {"reply_id", "songs", "selected", "status", "line", "season", "thread_id", "opened_at",

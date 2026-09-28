@@ -85,7 +85,8 @@ def parse_emoji(text: Optional[str]) -> Optional[discord.PartialEmoji]:
 
 def listen_label(song: dict, url: Optional[str]) -> str:
     if character_links.is_character(song):
-        return short(T.CHARACTER_OPEN.format(site=song.get("site") or character_links.site_for(url or "") or "the web"), 80)
+        site = song.get("site") or character_links.site_for(url or "") or "the web"
+        return short(T.STOOP_DOWNLOAD if site == "The Stoop" else T.CHARACTER_OPEN.format(site=site), 80)
     if song.get("site"):
         site = song["site"]
     elif not url or "suno." in url.lower():
@@ -948,7 +949,10 @@ class SunoFlow(commands.Cog):
             if song.get("tags") and not song.get("nsfw"):
                 embed.add_field(name=T.CHARACTER_TAGS_FIELD,
                                 value=short(", ".join(song["tags"][:10]), 200), inline=False)
-            if song.get("creator"):
+            if song.get("creator") and song.get("stoop"):
+                import porch as porch_mod
+                embed.add_field(name=T.CHARACTER_CREATOR_FIELD, value=short(porch_mod.stoop_creator_line(song), 1024))
+            elif song.get("creator"):
                 embed.add_field(name=T.CHARACTER_CREATOR_FIELD, value=short(escape_markdown(song["creator"]), 100))
         embed.add_field(name=T.COLLAB_LOOKING_FOR,
                         value="\n".join(f"{e} {label}" for _, label, e, _ in types), inline=False)

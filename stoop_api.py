@@ -40,6 +40,7 @@ log = logging.getLogger("aiavbot.stoop")
 
 DEFAULT_BASE = "https://api.frontporchai.app"
 HUB_CARD_URL = "https://hub.frontporchai.app/card/{id}"
+HUB_CREATOR_URL = "https://hub.frontporchai.app/creator/{id}"   # by id: survives a rename
 USER_AGENT = "AIAVBot/1.0 (+https://github.com/QuietOak/aiavbot)"
 MAX_TAKE = 48
 MAX_PAGES = 60                 # per poll; 60 x 48 = 2880 changed cards
@@ -119,12 +120,27 @@ def creator_name(card: dict) -> Optional[str]:
     return (c.get("displayName") or "").strip() or None
 
 
+def creator_url(card: dict) -> Optional[str]:
+    """The creator's profile link. The creator id is only ever used here, never shown."""
+    c = card.get("creator")
+    cid = c.get("id") if isinstance(c, dict) else None
+    return HUB_CREATOR_URL.format(id=cid) if cid else None
+
+
+def creator_badge(card: dict) -> Optional[str]:
+    """gold = hub owner, blue = a creator the owner trusts, silver = a Front Porch developer, None = everyone else."""
+    c = card.get("creator")
+    badge = c.get("verification") if isinstance(c, dict) else None
+    return badge if badge in ("gold", "blue", "silver") else None
+
+
 def original_creator_name(card: dict) -> Optional[str]:
+    """Free text the uploader typed when they aren't the author. Credit only, not a Stoop account."""
     oc = card.get("originalCreator")
-    if isinstance(oc, dict):
-        return (oc.get("displayName") or oc.get("name") or "").strip() or None
     if isinstance(oc, str):
         return oc.strip() or None
+    if isinstance(oc, dict):                     # defensive: the API sends text
+        return (oc.get("displayName") or oc.get("name") or "").strip() or None
     return None
 
 
@@ -137,6 +153,9 @@ def to_character_info(card: dict) -> dict:
         "title": (card.get("name") or "").strip() or None,
         "description": (card.get("summary") or "").strip() or None,
         "creator": creator_name(card),
+        "creator_url": creator_url(card),
+        "creator_badge": creator_badge(card),
+        "original_creator": original_creator_name(card),
         "tags": [str(t) for t in (card.get("tags") or []) if t][:15],
         "image_url": None,                       # the art needs the key: download and attach instead
         "nsfw": bool(card.get("nsfw")),

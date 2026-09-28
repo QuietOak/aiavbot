@@ -155,7 +155,8 @@ The Stoop (FrontPorch AI's character hub) gave AIAVBOT a **read-only partner key
 comment, message or upload. It lets the bot:
 
 - post an **arrival card** for every new Stoop character (SFW in the porch, 18+ in the 18+ porch)
-- show full character cards for Stoop links: art, summary, creator (✅ verified), tags, downloads, mod pick
+- show full character cards for Stoop links: art, summary, tags, "by {creator} on The Stoop" (linked to their profile,
+  with their hub badge), original-creator credit, score, downloads, Mod's Pick, token count and a **Download on The Stoop** button
 - keep cards in sync: **edits** are applied in place (plus an "✨ updated v2 → v3" note in the Say-hi thread),
   **removed** characters are hidden right away and tombstoned after 7 days, and characters that come back are restored
 - warn mods (in `mod_alerts`) when a character shared in an SFW channel is removed or becomes 18+

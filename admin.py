@@ -303,6 +303,11 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
             self.db.set_stoop_settings(interaction.guild_id, **fields)
         if stoop_update_notes is not None:
             self.db.set_stoop_settings(interaction.guild_id, stoop_notes=stoop_update_notes)
+        if stoop_feed or stoop_feed_18:
+            # Start the change feed at the same moment, so nothing created in the next few minutes is missed.
+            for rating in ("sfw", "nsfw"):
+                if not self.db.kv_get(f"stoop_since_{rating}"):
+                    self.db.kv_set(f"stoop_since_{rating}", stoop_api.now_iso())
         if reaction_milestones is not None or milestone_channels is not None:
             self.db.set_milestone_settings(interaction.guild_id, enabled=reaction_milestones,
                                            scope=milestone_channels.value if milestone_channels else None)

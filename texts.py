@@ -288,15 +288,24 @@ MILESTONE_DEFAULT = "🎉 {link} has **{count} reactions**! Congratulations {aut
 PORCH_ARRIVAL = "🚪 Someone new just walked up to the porch: **{name}**!"
 PORCH_SHARED = "🎭 **{poster}** brought **{name}** to the porch!"
 PORCH_ALREADY_HERE = "🎭 **{name}** is already on the porch! Say hi here: {url}"
-PORCH_CREATOR_FIELD = "Creator"
-PORCH_BASED_ON = "Based on a card by {name}"
+PORCH_CREATOR_FIELD = "Creator"                 # non-Stoop characters
+# Stoop characters, in The Stoop's own wording. {creator} links to their profile on the hub.
+STOOP_BY = "by {creator} on The Stoop"
+STOOP_ORIGINAL = "original creator: {name}"    # free text credit when the uploader isn't the author
+STOOP_BADGES = {
+    "gold": "👑 Hub owner",
+    "blue": "💙 Trusted creator",
+    "silver": "🛠️ Front Porch developer",
+}
+STOOP_DOWNLOAD = "⬇️ Download on The Stoop"
 PORCH_TAGS_FIELD = "Tags"
 PORCH_STATS_FIELD = "On The Stoop"
 PORCH_DOWNLOADS = "⬇️ {n:,} downloads"
-PORCH_MOD_PICK = "🏅 Mod pick"
+PORCH_MOD_PICK = "🏅 Mod's Pick"
+PORCH_SCORE = "⭐ {n:,} score"                 # upvotes minus downvotes (can be negative)
+PORCH_TOKENS = "🧮 ~{n:,} tokens"
 PORCH_VERSION = "v{n}"
 PORCH_TYPES = {"SOLO": "👤 Solo", "GROUP": "👥 Group", "WORLD": "🗺️ World"}
-PORCH_VERIFIED = " ✅"                       # after a verified creator's name
 PORCH_MET_NONE = "Chatted with {name}? Tap ✅ I met {name}!"
 PORCH_MET_ONE = "✅ 1 Dreamer has met {name}"
 PORCH_MET_MANY = "✅ {n} Dreamers have met {name}"

@@ -123,6 +123,24 @@ def stoop_key_from_env() -> Optional[str]:
 # Rendering (pure: no network, easy to test)
 # --------------------------------------------------------------------------- #
 
+def stoop_creator_line(char: dict) -> str:
+    """'by [Ada](profile) on The Stoop · 💙 Trusted creator' + 'original creator: X' on a second line."""
+    name = escape_markdown(char.get("creator") or "someone")
+    who = f"[{name}]({char['creator_url']})" if char.get("creator_url") else f"**{name}**"
+    line = T.STOOP_BY.format(creator=who)
+    badge = T.STOOP_BADGES.get(char.get("creator_badge") or "")
+    if badge:
+        line += f" · {badge}"
+    if char.get("original_creator"):
+        line += "\n" + T.STOOP_ORIGINAL.format(name=escape_markdown(char["original_creator"]))
+    return line
+
+
+def open_label(char: dict) -> str:
+    return T.STOOP_DOWNLOAD if char.get("stoop") or char.get("site") == "The Stoop" else \
+        T.PORCH_BTN_OPEN.format(site=char.get("site") or "the web")
+
+
 def desired_state(char: dict, adult_ok: bool) -> str:
     return "adult" if char.get("nsfw") and not adult_ok else "full"
 
@@ -153,7 +171,7 @@ def render_card(char: dict, *, state: str, kind: str, message_id: int, met: int,
         view = ui.View(timeout=None)
         view.add_item(PorchButton("report", message_id))
         if url and len(url) <= 512:
-            view.add_item(ui.Button(label=short(T.PORCH_BTN_OPEN.format(site=site), 80), url=url))
+            view.add_item(ui.Button(label=short(open_label(char), 80), url=url))
         content = (T.PORCH_SHARED.format(poster=escape_markdown(poster_name or "Someone"), name=escape_markdown(name))
                    if kind == "share" else None)
         return content, embed, view
@@ -163,23 +181,26 @@ def render_card(char: dict, *, state: str, kind: str, message_id: int, met: int,
     if char.get("description"):
         embed.description = short(char["description"], 500)
     creator = char.get("creator")
-    if creator:
-        verified = bool(stoop and isinstance(stoop.get("creator"), dict) and stoop["creator"].get("verification"))
-        value = escape_markdown(creator) + (T.PORCH_VERIFIED if verified else "")
-        oc = stoop_api.original_creator_name(stoop) if stoop else None
-        if oc and oc != creator:
-            value += "\n" + T.PORCH_BASED_ON.format(name=escape_markdown(oc))
-        embed.add_field(name=T.PORCH_CREATOR_FIELD, value=short(value, 1024), inline=True)
+    if stoop and creator:
+        # The Stoop's wording: "by {displayName} on The Stoop", linked to their profile, then the badge.
+        by = stoop_creator_line(char)
+        embed.add_field(name=T.PORCH_CREATOR_FIELD, value=short(by, 1024), inline=True)
+    elif creator:
+        embed.add_field(name=T.PORCH_CREATOR_FIELD, value=short(escape_markdown(creator), 1024), inline=True)
     if char.get("tags"):
         embed.add_field(name=T.PORCH_TAGS_FIELD, value=short(", ".join(char["tags"][:10]), 300), inline=True)
     if stoop:
         bits = []
         if stoop.get("type") in T.PORCH_TYPES:
             bits.append(T.PORCH_TYPES[stoop["type"]])
+        if isinstance(stoop.get("score"), int):
+            bits.append(T.PORCH_SCORE.format(n=stoop["score"]))
         if isinstance(stoop.get("downloadCount"), int):
             bits.append(T.PORCH_DOWNLOADS.format(n=stoop["downloadCount"]))
         if stoop.get("modPick"):
             bits.append(T.PORCH_MOD_PICK)
+        if isinstance(stoop.get("tokenCount"), int):
+            bits.append(T.PORCH_TOKENS.format(n=stoop["tokenCount"]))
         if stoop.get("version"):
             bits.append(T.PORCH_VERSION.format(n=stoop["version"]))
         if bits:
@@ -203,7 +224,7 @@ def render_card(char: dict, *, state: str, kind: str, message_id: int, met: int,
     view.add_item(PorchButton("collab", message_id))
     view.add_item(PorchButton("report", message_id))
     if url and len(url) <= 512:
-        view.add_item(ui.Button(label=short(T.PORCH_BTN_OPEN.format(site=site), 80), url=url))
+        view.add_item(ui.Button(label=short(open_label(char), 80), url=url))
 
     if kind == "arrival":
         content = T.PORCH_ARRIVAL.format(name=escape_markdown(name))
