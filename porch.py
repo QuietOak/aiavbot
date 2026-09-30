@@ -301,8 +301,9 @@ class ThreadTitleModal(ui.Modal):
     def __init__(self, porch: "Porch", post: dict, char: Optional[dict]):
         super().__init__(title=T.PORCH_THREAD_MODAL_TITLE, timeout=900)
         self.porch, self.mid = porch, post["message_id"]
-        self.name = ui.TextInput(style=discord.TextStyle.short, default=short((char or {}).get("title") or "", 90) or None,
-                                 max_length=T.THREAD_TITLE_MAX, required=False)
+        self.name = ui.TextInput(style=discord.TextStyle.short,
+                                 default=short((char or {}).get("title") or "this character", 90),
+                                 min_length=2, max_length=T.THREAD_TITLE_MAX, required=True)
         self.add_item(ui.Label(text=T.THREAD_TITLE_LABEL, description=T.THREAD_TITLE_DESCRIPTION, component=self.name))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:

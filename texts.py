@@ -106,8 +106,11 @@ COLLAB_TYPES_DESCRIPTION = "Pick as many as you like."
 COLLAB_NOTE_LABEL = "Anything else? (optional)"
 COLLAB_NOTE_PLACEHOLDER = "e.g. dark fantasy vibe, would love an animated loop for the chorus"
 COLLAB_NOTE_MAX = 500
-THREAD_TITLE_LABEL = "Thread title (optional)"
-THREAD_TITLE_DESCRIPTION = "Name the conversation so it's easy to find."
+THREAD_TITLE_LABEL = "Name the thread"
+THREAD_TITLE_DESCRIPTION = "Keep the suggestion or type your own, so the conversation is easy to find."
+COLLAB_TITLE_LABEL = "Name your collab"
+COLLAB_TITLE_DESCRIPTION = "Shown on the request card and as its thread's name. Keep it or type your own."
+COLLAB_ORIGINAL_TITLE_FIELD = "Based on"
 THREAD_TITLE_MAX = 90
 
 # (value, label, emoji, short description)
@@ -246,7 +249,7 @@ GALLERY_REMINDER = ("Thanks for sharing, {name}! 💛 Just a friendly heads-up: 
 GALLERY_REMINDER_MUSIC = ", and music is always welcome in {music}"
 
 GALLERY_MODAL_TITLE = "Present your collab"
-GALLERY_TITLE_LABEL = "Title (optional)"
+GALLERY_TITLE_LABEL = "Title (also names the comment thread)"
 GALLERY_TITLE_PLACEHOLDER = "What's it called?"
 GALLERY_MEMBERS_LABEL = "Who did you collab with?"
 GALLERY_MEMBERS_DESCRIPTION = "Pick people from this server (optional if they're not here)."

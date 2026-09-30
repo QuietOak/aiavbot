@@ -66,6 +66,17 @@ def one_line(text: str) -> str:
     return " ".join((text or "").split())
 
 
+def title_hint(text: Optional[str], limit: int = 60) -> Optional[str]:
+    """A suggested title from a post: its first real line, without links, cut at a word."""
+    for line in (text or "").splitlines():
+        line = one_line(discord.utils.remove_markdown(character_links.URL_RE.sub("", line))).strip(" -–—:|>")
+        if len(line) >= 4:
+            if len(line) > limit:
+                line = line[:limit].rsplit(" ", 1)[0].rstrip(",.;:") + "…"
+            return line
+    return None
+
+
 def song_title(share: Share) -> Optional[str]:
     song = share.song
     return song.get("title") if song else None
@@ -438,6 +449,12 @@ class CollabModal(_BaseModal):
     def __init__(self, flow: "SunoFlow", share: Share):
         is_char = flow.is_character_share(share)
         super().__init__(flow, share, T.COLLAB_MODAL_TITLE_CHARACTER if is_char else T.COLLAB_MODAL_TITLE)
+        # First: the name. Prefilled with a suggestion, so it's one tap to keep it.
+        self.thread_title = ui.TextInput(style=discord.TextStyle.short,
+                                         default=short(flow.default_title(share), T.THREAD_TITLE_MAX),
+                                         min_length=2, max_length=T.THREAD_TITLE_MAX, required=True)
+        self.add_item(ui.Label(text=T.COLLAB_TITLE_LABEL, description=T.COLLAB_TITLE_DESCRIPTION,
+                               component=self.thread_title))
         type_list = T.CHARACTER_COLLAB_TYPES if is_char else T.COLLAB_TYPES
         self.types = ui.Select(
             options=[discord.SelectOption(label=label, value=value, emoji=emoji, description=desc)
@@ -449,11 +466,6 @@ class CollabModal(_BaseModal):
         self.note = ui.TextInput(style=discord.TextStyle.paragraph, placeholder=T.COLLAB_NOTE_PLACEHOLDER,
                                  max_length=T.COLLAB_NOTE_MAX, required=False)
         self.add_item(ui.Label(text=T.COLLAB_NOTE_LABEL, component=self.note))
-        default = flow.default_title(share)
-        self.thread_title = ui.TextInput(style=discord.TextStyle.short, default=short(default, T.THREAD_TITLE_MAX) or None,
-                                         max_length=T.THREAD_TITLE_MAX, required=False)
-        self.add_item(ui.Label(text=T.THREAD_TITLE_LABEL, description=T.THREAD_TITLE_DESCRIPTION,
-                               component=self.thread_title))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await ack(interaction)
@@ -465,6 +477,11 @@ class CollabModal(_BaseModal):
 class ThreadModal(_BaseModal):
     def __init__(self, flow: "SunoFlow", share: Share):
         super().__init__(flow, share, T.THREAD_MODAL_TITLE)
+        default = song_title(share) or T.THREAD_FALLBACK_TITLE.format(name=share.poster_name)
+        self.thread_title = ui.TextInput(style=discord.TextStyle.short, default=short(default, T.THREAD_TITLE_MAX),
+                                         min_length=2, max_length=T.THREAD_TITLE_MAX, required=True)
+        self.add_item(ui.Label(text=T.THREAD_TITLE_LABEL, description=T.THREAD_TITLE_DESCRIPTION,
+                               component=self.thread_title))
         self.wants = ui.Select(
             options=[discord.SelectOption(label=label, value=value, emoji=emoji)
                      for value, label, emoji in T.RESPONSE_TYPES],
@@ -474,11 +491,6 @@ class ThreadModal(_BaseModal):
         self.note = ui.TextInput(style=discord.TextStyle.paragraph, placeholder=T.THREAD_NOTE_PLACEHOLDER,
                                  max_length=T.THREAD_NOTE_MAX, required=False)
         self.add_item(ui.Label(text=T.THREAD_NOTE_LABEL, component=self.note))
-        default = song_title(share) or T.THREAD_FALLBACK_TITLE.format(name=share.poster_name)
-        self.thread_title = ui.TextInput(style=discord.TextStyle.short, default=short(default, T.THREAD_TITLE_MAX),
-                                         max_length=T.THREAD_TITLE_MAX, required=False)
-        self.add_item(ui.Label(text=T.THREAD_TITLE_LABEL, description=T.THREAD_TITLE_DESCRIPTION,
-                               component=self.thread_title))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await ack(interaction)
@@ -553,10 +565,9 @@ class GalleryModal(_BaseModal):
 
     def __init__(self, flow: "SunoFlow", share: Share):
         super().__init__(flow, share, T.GALLERY_MODAL_TITLE)
-        default_title = song_title(share)
+        default_title = song_title(share) or share.title_hint or T.GALLERY_DEFAULT_TITLE
         self.title_in = ui.TextInput(style=discord.TextStyle.short, placeholder=T.GALLERY_TITLE_PLACEHOLDER,
-                                     default=short(default_title, 100) if default_title else None,
-                                     max_length=100, required=False)
+                                     default=short(default_title, 100), min_length=2, max_length=100, required=True)
         self.add_item(ui.Label(text=T.GALLERY_TITLE_LABEL, component=self.title_in))
         self.members = ui.UserSelect(min_values=0, max_values=10, required=False)
         self.add_item(ui.Label(text=T.GALLERY_MEMBERS_LABEL, description=T.GALLERY_MEMBERS_DESCRIPTION,
@@ -640,6 +651,9 @@ class SunoFlow(commands.Cog):
         name = message.author.display_name
         self.db.create_share(message.id, message.guild.id, message.channel.id,
                              message.author.id, name, links, kind=kind)
+        hint = title_hint(message.content)
+        if hint:
+            self.db.update_share(message.id, title_hint=hint)
         if card_info:
             self.db.update_share(message.id, songs=[card_info])
         share = self.db.get_share(message.id)
@@ -955,6 +969,8 @@ class SunoFlow(commands.Cog):
             return song["title"]
         if self.is_character_share(share):
             return T.CHARACTER_FALLBACK_TITLE.format(name=share.poster_name)
+        if share.title_hint:
+            return share.title_hint
         if share.kind == "music":
             return T.THREAD_FALLBACK_TITLE.format(name=share.poster_name)
         return T.COLLAB_IDEA_TITLE.format(name=share.poster_name)
@@ -1086,7 +1102,11 @@ class SunoFlow(commands.Cog):
         # Posts made in the collab channel: quote what they wrote so the card explains itself.
         src = None if from_music else await self.fetch_source(share)
 
-        embed = discord.Embed(title=short(f"{icon} {title}", 256), url=song_url, color=PANEL_COLOR)
+        # The member's chosen name heads the card and names the thread; the song/character stays visible.
+        named = thread_title if thread_title and thread_title != title else None
+        embed = discord.Embed(title=short(f"{icon} {named or title}", 256), url=song_url, color=PANEL_COLOR)
+        if named and (song.get("title") or is_char):
+            embed.add_field(name=T.COLLAB_ORIGINAL_TITLE_FIELD, value=short(f"{icon} {title}", 256), inline=False)
         embed.set_author(name=user.display_name, icon_url=user.display_avatar.url)
         idea = (src.content.strip() if src is not None else "")
         if idea and character_links.URL_RE.sub("", idea).strip():      # skip if the post is only link(s)

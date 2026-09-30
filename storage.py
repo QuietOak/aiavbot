@@ -287,6 +287,7 @@ class Share:
     opened_at: Optional[float]
     kind: str = "music"
     origin_url: Optional[str] = None   # porch collabs: link to the porch card they came from
+    title_hint: Optional[str] = None   # suggested name from the post's first line (collab/gallery posts)
 
     @property
     def song(self) -> Optional[dict]:
@@ -365,6 +366,8 @@ class Storage:
             self.conn.execute("ALTER TABLE shares ADD COLUMN kind TEXT NOT NULL DEFAULT 'music'")
         if "origin_url" not in cols:
             self.conn.execute("ALTER TABLE shares ADD COLUMN origin_url TEXT")
+        if "title_hint" not in cols:
+            self.conn.execute("ALTER TABLE shares ADD COLUMN title_hint TEXT")
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(seasons)")}
         if "target_id" not in cols:
             self.conn.execute("ALTER TABLE seasons ADD COLUMN target_id INTEGER")
@@ -513,7 +516,7 @@ class Storage:
 
     def update_share(self, post_id: int, **fields) -> None:
         allowed = {"reply_id", "songs", "selected", "status", "line", "season", "thread_id", "opened_at",
-                   "origin_url"}
+                   "origin_url", "title_hint"}
         for k in fields:
             if k not in allowed:
                 raise ValueError(k)
