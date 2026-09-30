@@ -109,6 +109,25 @@ In Dreamers (as an admin):
 Make sure the live bot's role can see and post in those channels (and any theme channels).
 `/aiav status` should show no missing permissions, **Suno: ✅ working**, and `🧩 live · main @ …`.
 
+## 3b. The Stoop partner key (optional, for the character porch)
+
+Each instance has its own key: *Dreamers AIAVBOT test* for test and *Dreamers AIAVBOT live* for live.
+
+```
+sudo nano /etc/aiavbot/test.env          # add a line:  STOOP_API_KEY=pk_live_...
+sudo systemctl restart aiavbot@test
+```
+
+Then `/aiav status` in that server should show **🏡 The Stoop API: ✅ working**. The key never appears in chat, logs or
+`/aiav status`. If a key leaks, tell The Stoop's developer so they can revoke it, then put the new one in the env file.
+
+Porch channels (the 18+ one must be age-restricted in Discord):
+```
+/aiav setup porch:#the-porch porch_18:#the-porch-after-dark mod_alerts:#mod-alerts
+/aiav settings stoop_feed:True stoop_feed_18:True
+```
+The feeds start from the moment they're turned on (no backlog of older characters).
+
 ## 4. Launch smoke test (live, 10 min)
 
 - [ ] A Suno link in the music channel gets **🚀 Enhance Sharing** and **❤️ Like on Suno**
@@ -129,7 +148,7 @@ Make sure the live bot's role can see and post in those channels (and any theme 
 | Live log | `sudo journalctl -u aiavbot@test -f` | `sudo journalctl -u aiavbot@live -f` |
 | Restart | `sudo systemctl restart aiavbot@test` | `sudo systemctl restart aiavbot@live` |
 | **Update from GitHub** | `sudo aiavbot-update test` | `sudo aiavbot-update live` |
-| Change token / server | `sudo nano /etc/aiavbot/test.env` + restart | `sudo nano /etc/aiavbot/live.env` + restart |
+| Change token / server / Stoop key | `sudo nano /etc/aiavbot/test.env` + restart | `sudo nano /etc/aiavbot/live.env` + restart |
 | Stop (e.g. test when idle) | `sudo systemctl stop aiavbot@test` | `sudo systemctl stop aiavbot@live` |
 
 `sudo aiavbot-update all` updates both. Both instances list: `systemctl list-units 'aiavbot@*'`.
@@ -166,7 +185,7 @@ then run `/aiav setup` in the test server, because the channel settings point at
 
 ## Security notes
 
-- Tokens live only in `/etc/aiavbot/<instance>.env` (root-only), never in the code folders or on GitHub.
+- Tokens and Stoop keys live only in `/etc/aiavbot/<instance>.env` (root-only), never in the code folders or on GitHub.
 - Both bots run as a no-login `aiavbot` user, and each instance can write only to its own `/var/lib/aiavbot/<instance>`.
 - Firewall allows only SSH in. Security updates install automatically.
 - **Token leaked?** Developer Portal → that bot → **Reset Token**, edit its env file, restart that instance.

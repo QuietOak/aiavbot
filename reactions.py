@@ -47,7 +47,8 @@ class Reactions(commands.Cog):
     def in_scope(self, cfg: GuildConfig, channel_id: int) -> bool:
         if cfg.milestone_scope == "all":
             return True
-        ids = {cfg.music_channel_id, cfg.collab_channel_id, cfg.gallery_channel_id, cfg.lounge_channel_id}
+        ids = {cfg.music_channel_id, cfg.collab_channel_id, cfg.gallery_channel_id, cfg.lounge_channel_id,
+               cfg.porch_channel_id, cfg.porch18_channel_id, cfg.showcase_channel_id}
         ids |= self.db.theme_target_ids(cfg.guild_id)
         ids.discard(None)
         if channel_id in ids:

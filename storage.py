@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS guild_config (
     nightly_last        TEXT,                         -- local date of the last nightly update
     milestones          INTEGER NOT NULL DEFAULT 1,   -- announce reaction milestones
     milestone_scope     TEXT NOT NULL DEFAULT 'aiav'  -- 'aiav' (AIAV channels + theme channels) or 'all'
+    -- porch / Stoop columns are added by _migrate()
 );
 
 -- Highest reaction milestone announced per message.
@@ -148,6 +149,79 @@ CREATE TABLE IF NOT EXISTS actions (
     created_at  REAL NOT NULL
 );
 
+-- Small settings shared by the whole instance (e.g. the Stoop feed watermark).
+CREATE TABLE IF NOT EXISTS kv (
+    key     TEXT PRIMARY KEY,
+    value   TEXT
+);
+
+-- Stoop cards the bot knows about (only ones it has shown somewhere).
+CREATE TABLE IF NOT EXISTS stoop_cards (
+    card_id       TEXT PRIMARY KEY,
+    status        TEXT NOT NULL DEFAULT 'live',   -- live | missing | gone
+    nsfw          INTEGER NOT NULL DEFAULT 0,
+    version       INTEGER,
+    created_at    TEXT,                          -- Stoop createdAt (ISO)
+    updated_at    TEXT,                          -- Stoop updatedAt (ISO)
+    data          TEXT,                          -- last card JSON; cleared when gone
+    fetched_at    REAL,                          -- last time the API confirmed it (list or detail)
+    missing_since REAL,
+    first_seen    REAL NOT NULL
+);
+
+-- The bot's character cards in the porch channels.
+CREATE TABLE IF NOT EXISTS porch_posts (
+    message_id    INTEGER PRIMARY KEY,           -- the bot's card
+    guild_id      INTEGER NOT NULL,
+    channel_id    INTEGER NOT NULL,
+    kind          TEXT NOT NULL,                 -- arrival (feed) | share (a member's post)
+    adult_ok      INTEGER NOT NULL DEFAULT 0,    -- posted in an age-restricted channel
+    post_id       INTEGER,                       -- the member's message (share)
+    poster_id     INTEGER,                       -- the member who shared it (share)
+    stoop_id      TEXT,                          -- Stoop card id, if it's a Stoop character
+    info          TEXT,                          -- character dict (JSON) for non-Stoop characters
+    thread_id     INTEGER,                       -- the card's conversation thread
+    state         TEXT NOT NULL DEFAULT 'full',  -- full | adult | missing | gone
+    shown_version INTEGER,
+    shown_asset   TEXT,
+    rendered_at   REAL,
+    created_at    REAL NOT NULL
+);
+
+-- Other messages that show or link a Stoop card: collab request cards and members' own posts.
+CREATE TABLE IF NOT EXISTS stoop_refs (
+    message_id  INTEGER NOT NULL,
+    stoop_id    TEXT NOT NULL,
+    guild_id    INTEGER NOT NULL,
+    channel_id  INTEGER NOT NULL,
+    kind        TEXT NOT NULL,                   -- collab_card | member_post
+    adult_ok    INTEGER NOT NULL DEFAULT 0,
+    state       TEXT NOT NULL DEFAULT 'ok',      -- ok | stripped | alerted
+    created_at  REAL NOT NULL,
+    PRIMARY KEY (message_id, stoop_id)
+);
+
+CREATE TABLE IF NOT EXISTS porch_met (
+    card_key    TEXT NOT NULL,                   -- Stoop id, or "m<message id>" for other characters
+    guild_id    INTEGER NOT NULL,
+    user_id     INTEGER NOT NULL,
+    created_at  REAL NOT NULL,
+    PRIMARY KEY (card_key, guild_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS porch_reports (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id    INTEGER NOT NULL,
+    message_id  INTEGER NOT NULL,
+    card_key    TEXT,
+    reporter_id INTEGER NOT NULL,
+    reason      TEXT,
+    details     TEXT,
+    created_at  REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_porch_stoop ON porch_posts (stoop_id);
+CREATE INDEX IF NOT EXISTS idx_refs_stoop ON stoop_refs (stoop_id);
 CREATE INDEX IF NOT EXISTS idx_shares_status ON shares (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_collab_post ON collab_requests (post_id, song_idx);
 """
@@ -166,6 +240,16 @@ class GuildConfig:
     nightly_last: Optional[str] = None
     milestones: int = 1
     milestone_scope: str = "aiav"
+    porch_channel_id: Optional[int] = None
+    porch18_channel_id: Optional[int] = None
+    mod_channel_id: Optional[int] = None
+    stoop_feed: int = 0              # SFW arrival feed in the SFW porch
+    stoop_feed18: int = 0            # 18+ arrival feed in the age-restricted porch
+    stoop_notes: int = 1             # "✨ got an update" notes in conversation threads
+    stoop_reports: int = 1           # also send 🚩 reports about Stoop characters to The Stoop's moderators
+    showcase_channel_id: Optional[int] = None   # multimedia gallery: every presented collab is mirrored here
+    stoop_feed_since: Optional[str] = None     # ISO time the SFW feed was turned on (no backlog before it)
+    stoop_feed18_since: Optional[str] = None
 
 
 @dataclass
@@ -202,6 +286,8 @@ class Share:
     created_at: float
     opened_at: Optional[float]
     kind: str = "music"
+    origin_url: Optional[str] = None   # porch collabs: link to the porch card they came from
+    title_hint: Optional[str] = None   # suggested name from the post's first line (collab/gallery posts)
 
     @property
     def song(self) -> Optional[dict]:
@@ -255,9 +341,33 @@ class Storage:
             self.conn.execute("ALTER TABLE guild_config ADD COLUMN milestones INTEGER NOT NULL DEFAULT 1")
         if "milestone_scope" not in cols:
             self.conn.execute("ALTER TABLE guild_config ADD COLUMN milestone_scope TEXT NOT NULL DEFAULT 'aiav'")
+        for col, ddl in (("porch_channel_id", "INTEGER"), ("porch18_channel_id", "INTEGER"),
+                         ("mod_channel_id", "INTEGER"), ("stoop_feed", "INTEGER NOT NULL DEFAULT 0"),
+                         ("stoop_feed18", "INTEGER NOT NULL DEFAULT 0"), ("stoop_notes", "INTEGER NOT NULL DEFAULT 1"),
+                         ("stoop_feed_since", "TEXT"), ("stoop_feed18_since", "TEXT"),
+                         ("stoop_reports", "INTEGER NOT NULL DEFAULT 1"), ("showcase_channel_id", "INTEGER")):
+            if col not in cols:
+                self.conn.execute(f"ALTER TABLE guild_config ADD COLUMN {col} {ddl}")
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(collab_requests)")}
+        if "title" not in cols:
+            self.conn.execute("ALTER TABLE collab_requests ADD COLUMN title TEXT")
+        if "thread_id" not in cols:
+            self.conn.execute("ALTER TABLE collab_requests ADD COLUMN thread_id INTEGER")
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(gallery_entries)")}
+        if "mirror_id" not in cols:
+            self.conn.execute("ALTER TABLE gallery_entries ADD COLUMN mirror_id INTEGER")
+        if "mirror_channel_id" not in cols:
+            self.conn.execute("ALTER TABLE gallery_entries ADD COLUMN mirror_channel_id INTEGER")
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(porch_reports)")}
+        if "stoop_status" not in cols:
+            self.conn.execute("ALTER TABLE porch_reports ADD COLUMN stoop_status TEXT")
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(shares)")}
         if "kind" not in cols:
             self.conn.execute("ALTER TABLE shares ADD COLUMN kind TEXT NOT NULL DEFAULT 'music'")
+        if "origin_url" not in cols:
+            self.conn.execute("ALTER TABLE shares ADD COLUMN origin_url TEXT")
+        if "title_hint" not in cols:
+            self.conn.execute("ALTER TABLE shares ADD COLUMN title_hint TEXT")
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(seasons)")}
         if "target_id" not in cols:
             self.conn.execute("ALTER TABLE seasons ADD COLUMN target_id INTEGER")
@@ -277,7 +387,8 @@ class Storage:
             return None
         d = dict(row)
         d["mod_role_ids"] = json.loads(d["mod_role_ids"]) if d.get("mod_role_ids") else []
-        return GuildConfig(**d)
+        # Ignore columns this version doesn't know (e.g. after rolling the code back), instead of crashing.
+        return GuildConfig(**{k: v for k, v in d.items() if k in GuildConfig.__dataclass_fields__})
 
     def set_mod_roles(self, guild_id: int, role_ids: list[int]) -> None:
         self._exec("INSERT OR IGNORE INTO guild_config (guild_id) VALUES (?)", (guild_id,))
@@ -285,15 +396,28 @@ class Storage:
                    (json.dumps(sorted(set(role_ids))), guild_id))
 
     def set_channels(self, guild_id: int, **channels: Optional[int]) -> GuildConfig:
-        """Set any of music/collab/lounge/gallery channel ids. None values are left unchanged."""
+        """Set any of music/collab/lounge/gallery/porch/porch18/mod channel ids. None = unchanged, 0 = clear."""
         self._exec("INSERT OR IGNORE INTO guild_config (guild_id) VALUES (?)", (guild_id,))
         for key, value in channels.items():
             if value is not None:
                 col = f"{key}_channel_id"
-                if col not in ("music_channel_id", "collab_channel_id", "lounge_channel_id", "gallery_channel_id"):
+                if col not in ("music_channel_id", "collab_channel_id", "lounge_channel_id", "gallery_channel_id",
+                               "porch_channel_id", "porch18_channel_id", "mod_channel_id",
+                               "showcase_channel_id"):
                     raise ValueError(key)
-                self._exec(f"UPDATE guild_config SET {col}=? WHERE guild_id=?", (value, guild_id))
+                self._exec(f"UPDATE guild_config SET {col}=? WHERE guild_id=?", (value or None, guild_id))
         return self.get_config(guild_id)
+
+    def set_stoop_settings(self, guild_id: int, **fields) -> None:
+        """stoop_feed, stoop_feed18, stoop_notes, stoop_feed_since, stoop_feed18_since."""
+        allowed = {"stoop_feed", "stoop_feed18", "stoop_notes", "stoop_feed_since", "stoop_feed18_since",
+                   "stoop_reports"}
+        self._exec("INSERT OR IGNORE INTO guild_config (guild_id) VALUES (?)", (guild_id,))
+        for k, v in fields.items():
+            if k not in allowed:
+                raise ValueError(k)
+            self._exec(f"UPDATE guild_config SET {k}=? WHERE guild_id=?",
+                       (int(v) if isinstance(v, bool) else v, guild_id))
 
     def set_nightly(self, guild_id: int, enabled: Optional[bool] = None, last: Optional[str] = None) -> None:
         self._exec("INSERT OR IGNORE INTO guild_config (guild_id) VALUES (?)", (guild_id,))
@@ -388,10 +512,11 @@ class Storage:
         d = dict(row)
         d["links"] = json.loads(d["links"])
         d["songs"] = json.loads(d["songs"]) if d["songs"] else None
-        return Share(**d)
+        return Share(**{k: v for k, v in d.items() if k in Share.__dataclass_fields__})
 
     def update_share(self, post_id: int, **fields) -> None:
-        allowed = {"reply_id", "songs", "selected", "status", "line", "season", "thread_id", "opened_at"}
+        allowed = {"reply_id", "songs", "selected", "status", "line", "season", "thread_id", "opened_at",
+                   "origin_url", "title_hint"}
         for k in fields:
             if k not in allowed:
                 raise ValueError(k)
@@ -429,14 +554,21 @@ class Storage:
     # ------------------------------------------------------------------ collab
     def add_collab(self, card_id: int, guild_id: int, channel_id: int, post_id: int, song_idx: int,
                    creator_id: int, song_id: Optional[str], types: list[str],
-                   note: Optional[str], season: Optional[str]) -> None:
+                   note: Optional[str], season: Optional[str], title: Optional[str] = None,
+                   thread_id: Optional[int] = None) -> None:
         self._exec(
             """INSERT INTO collab_requests
-               (card_id, guild_id, channel_id, post_id, song_idx, creator_id, song_id, types, note, season, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (card_id, guild_id, channel_id, post_id, song_idx, creator_id, song_id, types, note, season,
+                created_at, title, thread_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (card_id, guild_id, channel_id, post_id, song_idx, creator_id, song_id,
-             json.dumps(types), note, season, time.time()),
+             json.dumps(types), note, season, time.time(), title, thread_id),
         )
+
+    def recent_collabs(self, guild_id: int, since: float, limit: int = 25) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM collab_requests WHERE guild_id=? AND created_at>=? ORDER BY created_at DESC LIMIT ?",
+            (guild_id, since, limit)).fetchall()
 
     def get_collab_for(self, post_id: int, song_idx: int) -> Optional[sqlite3.Row]:
         return self.conn.execute(
@@ -498,6 +630,17 @@ class Storage:
              json.dumps(member_ids), others, note, time.time()),
         )
 
+    def set_gallery_mirror(self, card_id: int, mirror_id: int, mirror_channel_id: int) -> None:
+        self._exec("UPDATE gallery_entries SET mirror_id=?, mirror_channel_id=? WHERE card_id=?",
+                   (mirror_id, mirror_channel_id, card_id))
+
+    def gallery_entry(self, card_id: int) -> Optional[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM gallery_entries WHERE card_id=?", (card_id,)).fetchone()
+
+    def gallery_entry_for_post(self, post_id: int) -> Optional[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM gallery_entries WHERE post_id=? ORDER BY created_at DESC",
+                                 (post_id,)).fetchone()
+
     # ------------------------------------------------------------- reactions
     def get_milestone(self, message_id: int) -> int:
         row = self.conn.execute("SELECT last_milestone FROM reaction_milestones WHERE message_id=?",
@@ -520,8 +663,9 @@ class Storage:
             """SELECT s.poster_id AS uid FROM theme_posts t JOIN shares s ON s.post_id = t.post_id
                WHERE t.message_id=?
                UNION ALL SELECT creator_id FROM collab_requests WHERE card_id=?
-               UNION ALL SELECT creator_id FROM gallery_entries WHERE card_id=?""",
-            (message_id, message_id, message_id),
+               UNION ALL SELECT creator_id FROM gallery_entries WHERE card_id=? OR mirror_id=?
+               UNION ALL SELECT poster_id FROM porch_posts WHERE message_id=? AND poster_id IS NOT NULL""",
+            (message_id, message_id, message_id, message_id, message_id),
         ).fetchone()
         return row["uid"] if row else None
 
@@ -543,3 +687,222 @@ class Storage:
             (guild_id, since),
         ).fetchall()
         return {r["action"]: r["n"] for r in rows}
+
+    # ------------------------------------------------------------------ kv
+    def kv_get(self, key: str) -> Optional[str]:
+        row = self.conn.execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def kv_set(self, key: str, value: Optional[str]) -> None:
+        self._exec("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value=excluded.value",
+                   (key, value))
+
+    # ------------------------------------------------------------ stoop cards
+    def stoop_card(self, card_id: str) -> Optional[dict]:
+        row = self.conn.execute("SELECT * FROM stoop_cards WHERE card_id=?", (card_id,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["data"] = json.loads(d["data"]) if d["data"] else None
+        return d
+
+    def save_stoop_card(self, card: dict) -> None:
+        """Store the latest API data for a card and mark it live."""
+        self._exec(
+            """INSERT INTO stoop_cards (card_id, status, nsfw, version, created_at, updated_at, data,
+                                        fetched_at, missing_since, first_seen)
+               VALUES (?, 'live', ?, ?, ?, ?, ?, ?, NULL, ?)
+               ON CONFLICT (card_id) DO UPDATE SET status='live', nsfw=excluded.nsfw, version=excluded.version,
+                   created_at=excluded.created_at, updated_at=excluded.updated_at, data=excluded.data,
+                   fetched_at=excluded.fetched_at, missing_since=NULL""",
+            (card["id"], int(bool(card.get("nsfw"))), card.get("version"), card.get("createdAt"),
+             card.get("updatedAt"), json.dumps(card, ensure_ascii=False), time.time(), time.time()),
+        )
+
+    def mark_stoop_missing(self, card_id: str) -> None:
+        self._exec("""UPDATE stoop_cards SET status='missing', fetched_at=?,
+                      missing_since=COALESCE(missing_since, ?) WHERE card_id=? AND status='live'""",
+                   (time.time(), time.time(), card_id))
+
+    def mark_stoop_gone(self, card_id: str) -> None:
+        """Tombstone: forget the card's content, keep the id and status."""
+        self._exec("UPDATE stoop_cards SET status='gone', data=NULL WHERE card_id=?", (card_id,))
+
+    def touch_stoop_card(self, card_id: str) -> None:
+        self._exec("UPDATE stoop_cards SET fetched_at=? WHERE card_id=?", (time.time(), card_id))
+
+    def stoop_cards_due(self, now: float, recent_days: int, recent_every: float, old_every: float,
+                        limit: int, missing_every: float = 86400) -> list[str]:
+        """Cards shown somewhere whose last API confirmation is older than their re-check interval.
+        Live: every `recent_every` if shown in the last `recent_days`, else `old_every`.
+        Missing: every `missing_every` (so a comeback the feed missed is still noticed before the tombstone)."""
+        recent_cutoff = now - recent_days * 86400
+        rows = self.conn.execute(
+            """SELECT c.card_id, c.status, c.fetched_at,
+                      MAX(COALESCE((SELECT MAX(p.created_at) FROM porch_posts p WHERE p.stoop_id = c.card_id), 0),
+                          COALESCE((SELECT MAX(r.created_at) FROM stoop_refs r WHERE r.stoop_id = c.card_id), 0)) AS shown
+               FROM stoop_cards c
+               WHERE c.status IN ('live', 'missing')
+               AND (EXISTS (SELECT 1 FROM porch_posts p WHERE p.stoop_id = c.card_id)
+                    OR EXISTS (SELECT 1 FROM stoop_refs r WHERE r.stoop_id = c.card_id))""").fetchall()
+        due = []
+        for r in rows:
+            if r["status"] == "missing":
+                every = missing_every
+            else:
+                every = recent_every if (r["shown"] or 0) >= recent_cutoff else old_every
+            if (r["fetched_at"] or 0) + every <= now:
+                due.append((r["fetched_at"] or 0, r["card_id"]))
+        return [cid for _, cid in sorted(due)[:limit]]
+
+    def note_stoop_pending(self, card_id: str) -> None:
+        """A card we showed without API data (the API was down): re-check it as soon as possible."""
+        self._exec("""INSERT INTO stoop_cards (card_id, status, fetched_at, first_seen)
+                      VALUES (?, 'live', 0, ?) ON CONFLICT (card_id) DO NOTHING""", (card_id, time.time()))
+
+    def porch_posts_in_channel(self, channel_id: int) -> list[dict]:
+        return [self._porch(r) for r in self.conn.execute(
+            "SELECT * FROM porch_posts WHERE channel_id=?", (channel_id,))]
+
+    def all_porch_posts(self) -> list[dict]:
+        return [self._porch(r) for r in self.conn.execute("SELECT * FROM porch_posts ORDER BY created_at")]
+
+    def adult_porch_posts(self) -> list[dict]:
+        return [self._porch(r) for r in self.conn.execute(
+            "SELECT * FROM porch_posts WHERE adult_ok=1 AND state='full'")]
+
+    def stoop_cards_missing_since(self, before: float) -> list[str]:
+        return [r["card_id"] for r in self.conn.execute(
+            "SELECT card_id FROM stoop_cards WHERE status='missing' AND missing_since < ?", (before,))]
+
+    def stoop_known_ids(self) -> set[str]:
+        return {r["card_id"] for r in self.conn.execute("SELECT card_id FROM stoop_cards")}
+
+    # ------------------------------------------------------------ porch posts
+    def add_porch_post(self, message_id: int, guild_id: int, channel_id: int, kind: str, *, adult_ok: bool,
+                       post_id: Optional[int] = None, poster_id: Optional[int] = None,
+                       stoop_id: Optional[str] = None, info: Optional[dict] = None, state: str = "full",
+                       shown_version: Optional[int] = None, shown_asset: Optional[str] = None) -> None:
+        self._exec(
+            """INSERT OR REPLACE INTO porch_posts
+               (message_id, guild_id, channel_id, kind, adult_ok, post_id, poster_id, stoop_id, info, state,
+                shown_version, shown_asset, rendered_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (message_id, guild_id, channel_id, kind, int(adult_ok), post_id, poster_id, stoop_id,
+             json.dumps(info, ensure_ascii=False) if info else None, state, shown_version, shown_asset,
+             time.time(), time.time()),
+        )
+
+    def porch_post(self, message_id: int) -> Optional[dict]:
+        row = self.conn.execute("SELECT * FROM porch_posts WHERE message_id=?", (message_id,)).fetchone()
+        return self._porch(row) if row else None
+
+    def porch_post_for_member_post(self, post_id: int) -> Optional[dict]:
+        row = self.conn.execute("SELECT * FROM porch_posts WHERE post_id=?", (post_id,)).fetchone()
+        return self._porch(row) if row else None
+
+    def porch_posts_for_stoop(self, stoop_id: str) -> list[dict]:
+        return [self._porch(r) for r in self.conn.execute(
+            "SELECT * FROM porch_posts WHERE stoop_id=? ORDER BY created_at", (stoop_id,))]
+
+    def porch_post_in_channel(self, stoop_id: str, channel_id: int) -> Optional[dict]:
+        row = self.conn.execute(
+            "SELECT * FROM porch_posts WHERE stoop_id=? AND channel_id=? ORDER BY created_at LIMIT 1",
+            (stoop_id, channel_id)).fetchone()
+        return self._porch(row) if row else None
+
+    def update_porch_post(self, message_id: int, **fields) -> None:
+        allowed = {"thread_id", "state", "shown_version", "shown_asset", "rendered_at", "info"}
+        for k in fields:
+            if k not in allowed:
+                raise ValueError(k)
+        if "info" in fields and fields["info"] is not None:
+            fields["info"] = json.dumps(fields["info"], ensure_ascii=False)
+        sets = ", ".join(f"{k}=?" for k in fields)
+        self._exec(f"UPDATE porch_posts SET {sets} WHERE message_id=?", (*fields.values(), message_id))
+
+    def delete_porch_post(self, message_id: int) -> None:
+        self._exec("DELETE FROM porch_posts WHERE message_id=?", (message_id,))
+
+    @staticmethod
+    def _porch(row: sqlite3.Row) -> dict:
+        d = dict(row)
+        d["info"] = json.loads(d["info"]) if d["info"] else None
+        return d
+
+    # ------------------------------------------------------------ stoop refs
+    def add_stoop_ref(self, message_id: int, stoop_id: str, guild_id: int, channel_id: int, kind: str,
+                      adult_ok: bool, state: str = "ok") -> None:
+        self._exec(
+            """INSERT OR IGNORE INTO stoop_refs (message_id, stoop_id, guild_id, channel_id, kind, adult_ok,
+                                                 state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (message_id, stoop_id, guild_id, channel_id, kind, int(adult_ok), state, time.time()))
+
+    def stoop_refs_for(self, stoop_id: str) -> list[dict]:
+        return [dict(r) for r in self.conn.execute(
+            "SELECT * FROM stoop_refs WHERE stoop_id=? ORDER BY created_at", (stoop_id,))]
+
+    def set_stoop_ref_state(self, message_id: int, stoop_id: str, state: str) -> None:
+        self._exec("UPDATE stoop_refs SET state=? WHERE message_id=? AND stoop_id=?", (state, message_id, stoop_id))
+
+    # ------------------------------------------------------------ met / reports
+    def add_met(self, card_key: str, guild_id: int, user_id: int) -> bool:
+        cur = self._exec("INSERT OR IGNORE INTO porch_met (card_key, guild_id, user_id, created_at) VALUES (?, ?, ?, ?)",
+                         (card_key, guild_id, user_id, time.time()))
+        return cur.rowcount > 0
+
+    def met_count(self, card_key: str, guild_id: int) -> int:
+        row = self.conn.execute("SELECT COUNT(*) n FROM porch_met WHERE card_key=? AND guild_id=?",
+                                (card_key, guild_id)).fetchone()
+        return row["n"] if row else 0
+
+    def add_report(self, guild_id: int, message_id: int, card_key: Optional[str], reporter_id: int,
+                   reason: str, details: Optional[str]) -> int:
+        cur = self._exec(
+            """INSERT INTO porch_reports (guild_id, message_id, card_key, reporter_id, reason, details, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (guild_id, message_id, card_key, reporter_id, reason, details, time.time()))
+        return cur.lastrowid
+
+    def report_exists(self, card_key: str, guild_id: int, reporter_id: int) -> bool:
+        return self.conn.execute(
+            "SELECT 1 FROM porch_reports WHERE card_key=? AND guild_id=? AND reporter_id=? LIMIT 1",
+            (card_key, guild_id, reporter_id)).fetchone() is not None
+
+    def reports_since(self, guild_id: int, reporter_id: int, since: float) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) n FROM porch_reports WHERE guild_id=? AND reporter_id=? AND created_at>=?",
+            (guild_id, reporter_id, since)).fetchone()
+        return row["n"] if row else 0
+
+    def set_report_stoop_status(self, report_id: int, status: str) -> None:
+        self._exec("UPDATE porch_reports SET stoop_status=? WHERE id=?", (status, report_id))
+
+    def porch_counts(self) -> dict:
+        row = self.conn.execute(
+            """SELECT (SELECT COUNT(*) FROM stoop_cards WHERE status='live') AS live,
+                      (SELECT COUNT(*) FROM stoop_cards WHERE status='missing') AS missing,
+                      (SELECT COUNT(*) FROM stoop_cards WHERE status='gone') AS gone,
+                      (SELECT COUNT(*) FROM porch_posts) AS posts""").fetchone()
+        return dict(row)
+
+    def note_stoop_unavailable(self, card_id: str) -> None:
+        """A card we were asked about but the API says isn't available (e.g. in review). Remembered so a
+        later comeback in the change feed restores whatever the bot showed for it."""
+        self._exec("""INSERT INTO stoop_cards (card_id, status, fetched_at, missing_since, first_seen)
+                      VALUES (?, 'missing', ?, ?, ?) ON CONFLICT (card_id) DO NOTHING""",
+                   (card_id, time.time(), time.time(), time.time()))
+
+    def stoop_pending_arrivals(self, channel_id: int, nsfw: bool, since_iso: str, limit: int) -> list[dict]:
+        """Live cards created after the feed was turned on that haven't been posted in this channel yet."""
+        rows = self.conn.execute(
+            """SELECT * FROM stoop_cards c
+               WHERE c.status='live' AND c.nsfw=? AND c.created_at >= ? AND c.data IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM porch_posts p WHERE p.stoop_id=c.card_id AND p.channel_id=?)
+               ORDER BY c.created_at LIMIT ?""", (int(nsfw), since_iso, channel_id, limit)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["data"] = json.loads(d["data"]) if d["data"] else None
+            out.append(d)
+        return out

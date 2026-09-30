@@ -29,8 +29,8 @@ log = logging.getLogger("aiavbot.nightly")
 CATCH_UP_UNTIL_HOUR = 12   # a missed midnight update is still posted until noon
 
 
-def stats_line(stats: dict) -> str:
-    return " · ".join(f"{stats.get(key, 0)} {label}" for key, label in T.STAT_LABELS)
+def stats_line(stats: dict, labels: list = None) -> str:
+    return " · ".join(f"{stats.get(key, 0)} {label}" for key, label in (labels or T.STAT_LABELS))
 
 
 def period_stats(db: Storage, guild_id: int, end: datetime) -> list[tuple[str, dict]]:
@@ -44,12 +44,30 @@ def period_stats(db: Storage, guild_id: int, end: datetime) -> list[tuple[str, d
     return out
 
 
-def build_update_embed(db: Storage, guild_id: int, end: datetime, nightly: bool) -> discord.Embed:
+def build_update_embed(db: Storage, guild_id: int, end: datetime, nightly: bool,
+                       stoop_total: Optional[int] = None) -> discord.Embed:
     embed = discord.Embed(title=T.NIGHTLY_TITLE if nightly else T.UPDATE_TITLE,
                           description=T.NIGHTLY_INTRO, color=0x9B7EDE, timestamp=end)
+    cfg = db.get_config(guild_id)
+    porch = bool(cfg and (cfg.porch_channel_id or cfg.porch18_channel_id))
     for label, stats in period_stats(db, guild_id, end):
-        embed.add_field(name=label, value=stats_line(stats), inline=False)
+        value = stats_line(stats)
+        if porch:
+            value += f"\n{T.PORCH_STAT_TITLE}: {stats_line(stats, T.PORCH_STAT_LABELS)}"
+        embed.add_field(name=label, value=value, inline=False)
+    if porch and stoop_total:
+        embed.set_footer(text=T.PORCH_STOOP_TOTAL.format(total=stoop_total))
     return embed
+
+
+async def stoop_total(bot: commands.Bot) -> Optional[int]:
+    """Total characters on The Stoop (SFW + 18+), if the porch module and API key are set up."""
+    porch = bot.get_cog("Porch")
+    if porch is None:
+        return None
+    stats = await porch.stoop_stats()
+    cards = (stats or {}).get("cards")
+    return cards.get("total") if isinstance(cards, dict) and isinstance(cards.get("total"), int) else None
 
 
 class Nightly(commands.Cog):
@@ -74,7 +92,8 @@ class Nightly(commands.Cog):
             return None
         end = end or datetime.now().astimezone()
         try:
-            return await channel.send(embed=build_update_embed(self.db, guild_id, end, nightly))
+            total = await stoop_total(self.bot) if (cfg.porch_channel_id or cfg.porch18_channel_id) else None
+            return await channel.send(embed=build_update_embed(self.db, guild_id, end, nightly, total))
         except discord.HTTPException as e:
             log.warning("Couldn't post update in lounge: %s", e)
             return None

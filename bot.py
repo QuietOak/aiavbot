@@ -128,6 +128,7 @@ class AIAVBot(commands.Bot):
         await self.load_extension("admin")
         await self.load_extension("nightly")
         await self.load_extension("reactions")
+        await self.load_extension("porch")
 
         if self.dev_guild_id:
             # Test server: commands appear instantly.

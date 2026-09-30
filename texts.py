@@ -106,6 +106,12 @@ COLLAB_TYPES_DESCRIPTION = "Pick as many as you like."
 COLLAB_NOTE_LABEL = "Anything else? (optional)"
 COLLAB_NOTE_PLACEHOLDER = "e.g. dark fantasy vibe, would love an animated loop for the chorus"
 COLLAB_NOTE_MAX = 500
+THREAD_TITLE_LABEL = "Name the thread"
+THREAD_TITLE_DESCRIPTION = "Keep the suggestion or type your own, so the conversation is easy to find."
+COLLAB_TITLE_LABEL = "Name your collab"
+COLLAB_TITLE_DESCRIPTION = "Shown on the request card and as its thread's name. Keep it or type your own."
+COLLAB_ORIGINAL_TITLE_FIELD = "Based on"
+THREAD_TITLE_MAX = 90
 
 # (value, label, emoji, short description)
 COLLAB_TYPES = [
@@ -136,6 +142,7 @@ CHARACTER_ABOUT_FIELD = "About the character"
 CHARACTER_TAGS_FIELD = "Tags"
 CHARACTER_CREATOR_FIELD = "Card creator"
 CHARACTER_ADULT_NOTE = "🔞 Tagged 18+. Details are on the card itself."
+COLLAB_CHARACTER_UNAVAILABLE = "🚪 This character isn't available on The Stoop right now."
 CHARACTER_OPEN = "⬇️ Open on {site}"          # link button on character cards
 
 # Collab types offered when the request is for a character. (value, label, emoji, short description)
@@ -174,6 +181,7 @@ RESPONSE_TYPES = [
 THREAD_NOTE_LABEL = "Opening note (optional)"
 THREAD_NOTE_PLACEHOLDER = "Anything you'd like listeners to know"
 THREAD_NOTE_MAX = 1000
+PORCH_THREAD_MODAL_TITLE = "Start a thread"
 
 THREAD_NAME = "🎵 {title}"
 THREAD_FALLBACK_TITLE = "{name}'s song"
@@ -195,19 +203,39 @@ GENERIC_ERROR = "Something went wrong on my end. Please try again in a moment."
 
 # ================================================================ collab channel
 # When someone posts directly in the collab requests channel (not in a thread).
-COLLAB_PROMPT = "🤝 Starting a collab, **{name}**?"
-COLLAB_PROMPT_YES = "Yes, post a collab request"
-COLLAB_PROMPT_NO = "No, not a request"
+COLLAB_PROMPT = "🤝 Hi **{name}**! What's this post?"
+COLLAB_PROMPT_YES = "🤝 A new collab request"
+COLLAB_PROMPT_RESP = "💬 I'm responding to a collab"
+COLLAB_PROMPT_DONE = "🎉 It's a finished collab"
+COLLAB_PROMPT_NO = "None of these"
 COLLAB_NOT_YOURS = "Only the person who posted this can turn it into a collab request."
 COLLAB_POSTED_HERE = "Your collab request is up, with its own thread: {url} 🤝"
 # Private, friendly reminder when someone answers "No" in the collab channel.
 # When the post in the collab channel is a character (Stoop/Chub/... link or a PNG/JSON card file)
-COLLAB_PROMPT_CHARACTER = "🎭 Looks like a character, **{name}**! Want to find collaborators for them?"
-COLLAB_PROMPT_CHARACTER_YES = "Yes, find collaborators"
-COLLAB_REMINDER = ("Thanks for posting, {name}! 💛 Just a friendly heads-up: {channel} is kept for collab "
-                   "requests so they're easy to browse. For chatting and other shares, a thread here or "
-                   "{lounge} is the perfect spot.")
+COLLAB_PROMPT_CHARACTER = "🎭 Looks like a character, **{name}**! What's this post?"
+COLLAB_PROMPT_CHARACTER_YES = "🤝 Find collaborators for them"
+COLLAB_REMINDER = ("Thanks for posting, {name}! 💛 Just a friendly heads-up: {channel} is for making collab "
+                   "requests, so they're easy to browse. Comments are best in the collab's own thread, "
+                   "or in {lounge}.")
 LOUNGE_FALLBACK = "the AIAV Club lounge"
+
+# "💬 I'm responding to a collab": pick the collab, the bot posts their message in its thread.
+RESPOND_PICK = "Which collab are you responding to? I'll post your message in its thread and let the creator know."
+RESPOND_PLACEHOLDER = "Pick the collab request"
+RESPOND_NONE = ("There aren't any collab requests to respond to yet. If you're looking for collaborators, "
+                "pick **🤝 A new collab request** instead!")
+RESPOND_OPTION_DESC = "by {creator} · {when}"
+RESPOND_POST = "💬 {responder} responded to {creator}'s collab request:"
+RESPOND_ORIGINAL = "📌 Original post: {url}"
+RESPOND_DONE = ("Posted in the collab's thread: {url} 💬\nYour original message is still here. You can delete it "
+                "if you like, since the thread has a copy.")
+RESPOND_THREAD_GONE = "I couldn't find that collab's thread any more. Try another one, or reply on the request directly."
+RESPOND_FILES_SKIPPED = "*(Some attachments were too large to copy. See the original post.)*"
+
+# "🎉 It's a finished collab": the gallery form; the card is posted in the gallery channel.
+FINISHED_NO_GALLERY = "The gallery channel isn't set up yet. Please let a moderator know!"
+FINISHED_POSTED = ("Presented in the gallery: {url} 🎉\nYour original message is still here. You can delete it "
+                   "if you like, since the gallery has a copy.")
 
 # ======================================================================= gallery
 # When someone posts in the gallery channel (not in a thread).
@@ -221,7 +249,7 @@ GALLERY_REMINDER = ("Thanks for sharing, {name}! 💛 Just a friendly heads-up: 
 GALLERY_REMINDER_MUSIC = ", and music is always welcome in {music}"
 
 GALLERY_MODAL_TITLE = "Present your collab"
-GALLERY_TITLE_LABEL = "Title (optional)"
+GALLERY_TITLE_LABEL = "Title (also names the comment thread)"
 GALLERY_TITLE_PLACEHOLDER = "What's it called?"
 GALLERY_MEMBERS_LABEL = "Who did you collab with?"
 GALLERY_MEMBERS_DESCRIPTION = "Pick people from this server (optional if they're not here)."
@@ -243,6 +271,14 @@ GALLERY_THREAD_NAME = "💬 {title}"
 GALLERY_THREAD_INTRO = ("🎉 Congratulations {people} on **{title}**!\n"
                         "Leave your comments, kudos and questions for the creators here. 💬")
 GALLERY_POSTED = "Your collab is presented, with a comment thread: {url} 🎉"
+# Every presented collab is mirrored to the multimedia gallery (if set with /aiav setup showcase:).
+MIRROR_HEADER = "🎉 **New AIAV Club collab!** {credits}"
+MIRROR_BUTTON = "💬 Comments & original"
+
+# /aiav gallery_report
+REPORT_TITLE = "📚 **AIAV gallery, {month}**: {entries} publication{s} · {people} people involved"
+REPORT_LINE = "{name}: {count}"
+REPORT_EMPTY = "Nothing was published in {channel} in {month}."
 
 # ================================================================ nightly update
 # Posted in the lounge at midnight (local time of the PC running the bot).
@@ -257,6 +293,7 @@ STAT_LABELS = [
     ("line", "lines"),
     ("thread", "threads"),
     ("collab", "collab requests"),
+    ("collab_response", "collab replies"),
     ("interested", "'interested'"),
     ("theme", "theme shares"),
     ("gallery_collab", "gallery collabs"),
@@ -279,3 +316,114 @@ MILESTONE_MESSAGES = {
     50: "🏆 **{count} reactions!** Legendary. Huge congratulations, {author}! {link}",
 }
 MILESTONE_DEFAULT = "🎉 {link} has **{count} reactions**! Congratulations {author}!"
+
+
+# ================================================================== the porch
+# Character channels: an SFW porch and an 18+ porch (Discord age-restricted). Cards come from members
+# sharing a character (The Stoop, Chub, ..., or a PNG/JSON card file) and from The Stoop arrival feed.
+PORCH_ARRIVAL = "🚪 Someone new just walked up to the porch: **{name}**!"
+PORCH_SHARED = "🎭 **{poster}** brought **{name}** to the porch!"
+PORCH_ALREADY_HERE = "🎭 **{name}** is already on the porch! Say hi here: {url}"
+PORCH_CREATOR_FIELD = "Creator"                 # non-Stoop characters
+# Stoop characters, in The Stoop's own wording. {creator} links to their profile on the hub.
+STOOP_BY = "by {creator} on The Stoop"
+STOOP_ORIGINAL = "original creator: {name}"    # free text credit when the uploader isn't the author
+STOOP_BADGES = {
+    "gold": "👑 Hub owner",
+    "blue": "💙 Trusted creator",
+    "silver": "🛠️ Front Porch developer",
+}
+STOOP_DOWNLOAD = "⬇️ Download on The Stoop"
+PORCH_TAGS_FIELD = "Tags"
+PORCH_STATS_FIELD = "On The Stoop"
+PORCH_DOWNLOADS = "⬇️ {n:,} downloads"
+PORCH_MOD_PICK = "🏅 Mod's Pick"
+PORCH_SCORE = "⭐ {n:,} score"                 # upvotes minus downvotes (can be negative)
+PORCH_TOKENS = "🧮 ~{n:,} tokens"
+PORCH_VERSION = "v{n}"
+PORCH_TYPES = {"SOLO": "👤 Solo", "GROUP": "👥 Group", "WORLD": "🗺️ World"}
+PORCH_MET_NONE = "Like {name}? Tap 💜 I'm interested in this card!"
+PORCH_MET_ONE = "💜 1 Dreamer is interested in {name}"
+PORCH_MET_MANY = "💜 {n} Dreamers are interested in {name}"
+
+# 18+ characters outside the age-restricted porch: name + link only.
+PORCH_ADULT_TITLE = "🔞 {name}"
+PORCH_ADULT_TEXT = "🔞 18+ character. Details and art stay on {site}{porch18}."
+PORCH_ADULT_WHERE = " and in {channel}"
+# A card that disappeared (deleted, in review, removed) or was tombstoned after 7 days.
+PORCH_MISSING = "🚪 This character isn't available right now. It may be getting an update, or it was removed."
+PORCH_GONE = "🚪 This character has left the porch."
+PORCH_UPDATE_NOTE = "✨ **{name}** got an update (v{old} → v{new})! Check it out: {url}"
+PORCH_GONE_THREAD = "🚪 {name} has left the porch. Thanks for all the hellos! 💛"
+PORCH_UNAVAILABLE_LINK = "🚪 That character isn't available on {site} right now (it may be getting an update). Try again later!"
+
+# Buttons on porch cards
+PORCH_BTN_HI = "🧵 Start a thread"
+PORCH_BTN_HI_OPEN = "🧵 Join the conversation"      # once the thread exists
+PORCH_BTN_MET = "💜 I'm interested in this card"
+PORCH_BTN_COLLAB = "🤝 Start a collab"
+PORCH_BTN_REPORT = "🚩 Report"
+PORCH_BTN_OPEN = "⬇️ Open on {site}"
+
+PORCH_HI_THREAD = "💬 {name}"
+PORCH_HI_INTRO = ("💬 A place to talk about **{name}**{by}! Share scenes you've played, favourite lines, "
+                  "art or music ideas, and questions for the creator.")
+PORCH_HI_BY = " by {creator}"
+PORCH_HI_DONE = "Here's the conversation about {name}: {url} 🧵"
+PORCH_MET_DONE = "Noted! 💜 Want to leave a comment for others in its thread?"
+PORCH_MET_AGAIN = "You've already said you're interested in {name}. 💜"
+PORCH_MET_TELL = "💬 Leave a comment"
+PORCH_HOW_TITLE = "Leave a comment"
+PORCH_HOW_LABEL = "What caught your eye?"
+PORCH_HOW_PLACEHOLDER = "e.g. Love the storm-chaser idea, can't wait to try her"
+PORCH_HOW_POST = "💜 **{user}** is interested in **{name}**: “{text}”"
+PORCH_HOW_DONE = "Posted in the conversation about {name}: {url} 💬"
+PORCH_CARD_GONE = "This character card isn't available anymore."
+PORCH_STALE = "This character isn't available right now."
+PORCH_ADULT_BUTTONS = "This is an 18+ character, so say hi and collab from the 18+ porch. 🔞"
+
+PORCH_REPORT_TITLE = "Report this character"
+PORCH_REPORT_REASON = "What's wrong?"
+PORCH_REPORT_REASONS = [
+    ("rules", "Breaks the server rules", "🚫"),
+    ("minor", "Minor or minor-coded character", "⛔"),
+    ("real", "Based on a real person", "🧍"),
+    ("stolen", "Stolen / not the creator's", "🕵️"),
+    ("rating", "Wrong rating (should be 18+)", "🔞"),
+    ("image", "Prohibited image", "🖼️"),
+    ("spam", "Spam", "📢"),
+    ("low_effort", "Low effort", "🥱"),
+    ("other", "Something else", "❓"),
+]
+PORCH_REPORT_DETAILS = "Details (optional)"
+PORCH_REPORT_PLACEHOLDER = "Anything the mods should know"
+PORCH_REPORT_DONE = "Thanks. The mods have been told privately. 🛡️"
+PORCH_REPORT_DONE_STOOP = "Thanks. Our mods and The Stoop's moderators have both been told privately. 🛡️"
+PORCH_REPORT_AGAIN = "You've already reported this character. The mods have it, thank you. 🛡️"
+PORCH_REPORT_LIMIT = "You've sent a lot of reports today. Please message a moderator directly if something else needs attention."
+PORCH_REPORT_NOTE = "Reports about Stoop characters also go to The Stoop's own moderators (without your name)."
+PORCH_REPORT_STOOP_SENT = "📨 Also sent to The Stoop's moderators."
+PORCH_REPORT_STOOP_URGENT = "📨 Also sent to The Stoop's moderators (marked urgent)."
+PORCH_REPORT_STOOP_ALREADY = "📨 The Stoop's moderators already have an open report for this character from us."
+PORCH_REPORT_STOOP_FAILED = "⚠️ Couldn't send to The Stoop's moderators ({why}). Forward it if needed."
+PORCH_REPORT_STOOP_SKIPPED = "ℹ️ Not sent to The Stoop ({why})."
+STOOP_REPORT_REASON = "{reason}. {details}Reported by a member of the Dreamers AI Discord."
+PORCH_REPORT_NO_CHANNEL = ("Thanks. I couldn't reach the mods automatically, so please message a moderator "
+                           "with a link to the card.")
+PORCH_REPORT_HEADER = "🚩 **Character report**"
+
+# Mod heads-ups (sent to the mod alerts channel)
+MOD_ALERT_MISSING = ("🛡️ A Stoop character shared here is no longer available (deleted, removed or in review): "
+                     "{url}\nDiscord may still show its old preview. Check whether the post needs removing.")
+MOD_ALERT_ADULT = ("🛡️ A Stoop character shared in an SFW channel is now **18+**: {url}\n"
+                   "Discord may still show its old preview. Check whether the post needs removing.")
+
+# Nightly update: characters line (shown only when a porch channel is set up)
+PORCH_STAT_TITLE = "🎭 Characters"
+PORCH_STAT_LABELS = [
+    ("porch_arrival", "new arrivals"),
+    ("porch_share", "shared"),
+    ("porch_hi", "threads"),
+    ("porch_met", "'interested'"),
+]
+PORCH_STOOP_TOTAL = "The Stoop: {total:,} characters"

@@ -28,6 +28,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import suno_fetch
+import texts as T
 from nightly import period_stats, stats_line
 from storage import Storage
 
@@ -44,6 +45,11 @@ NEEDED_PERMS = {
 }
 CUSTOM_EMOJI_RE = re.compile(r"^<a?:\w{2,32}:\d{15,25}>$")
 
+
+MOD_PERMS = {
+    "view_channel": "View Channel",
+    "send_messages": "Send Messages",
+}
 
 THEME_PERMS = {
     "view_channel": "View Channel",
@@ -200,23 +206,43 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
         collab="Channel where collab requests are posted",
         lounge="AIAV Club lounge: gets the nightly update",
         gallery="AIAV Club gallery: posts get asked 'Is this a collab result?'",
+        porch="SFW character porch: character shares + the Stoop arrival feed",
+        porch_18="18+ character porch. Must be an age-restricted channel",
+        mod_alerts="Private mod channel for 🚩 character reports and Stoop heads-ups",
+        showcase="Multimedia gallery: every presented collab is copied here too",
     )
     async def setup_cmd(self, interaction: discord.Interaction,
                         music: Optional[discord.TextChannel] = None,
                         collab: Optional[discord.TextChannel] = None,
                         lounge: Optional[discord.TextChannel] = None,
-                        gallery: Optional[discord.TextChannel] = None) -> None:
+                        gallery: Optional[discord.TextChannel] = None,
+                        porch: Optional[discord.TextChannel] = None,
+                        porch_18: Optional[discord.TextChannel] = None,
+                        mod_alerts: Optional[discord.TextChannel] = None,
+                        showcase: Optional[discord.TextChannel] = None) -> None:
+        problems = []
+        if porch_18 is not None and not porch_18.is_nsfw():
+            problems.append(f"⛔ {porch_18.mention} isn't age-restricted, so it can't be the 18+ porch. "
+                            "Turn on **Age-Restricted Channel** in its settings, then run this again.")
+            porch_18 = None
+        if porch is not None and porch_18 is not None and porch.id == porch_18.id:
+            problems.append("⛔ The SFW porch and the 18+ porch must be different channels.")
+            porch_18 = None
         cfg = self.db.set_channels(
             interaction.guild_id,
             music=music.id if music else None, collab=collab.id if collab else None,
             lounge=lounge.id if lounge else None, gallery=gallery.id if gallery else None,
+            porch=porch.id if porch else None, porch18=porch_18.id if porch_18 else None,
+            mod=mod_alerts.id if mod_alerts else None, showcase=showcase.id if showcase else None,
         )
-        lines = [
+        lines = problems + [
             "**AIAVBOT channels**",
             f"🎵 Music: {fmt_channel(cfg.music_channel_id)}",
             f"🤝 Collab requests: {fmt_channel(cfg.collab_channel_id)}",
             f"💬 Lounge: {fmt_channel(cfg.lounge_channel_id)}",
-            f"🖼️ Gallery: {fmt_channel(cfg.gallery_channel_id)}",
+            f"🖼️ Gallery: {fmt_channel(cfg.gallery_channel_id)} → mirrored to {fmt_channel(cfg.showcase_channel_id)}",
+            f"🎭 Porch: {fmt_channel(cfg.porch_channel_id)} · 🔞 18+ porch: {fmt_channel(cfg.porch18_channel_id)}",
+            f"🛡️ Mod alerts: {fmt_channel(cfg.mod_channel_id)}",
         ]
         lines += self._perm_warnings(interaction.guild, cfg)
         await reply(interaction, "\n".join(lines), ephemeral=True)
@@ -224,13 +250,20 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
     def _perm_warnings(self, guild: discord.Guild, cfg) -> list[str]:
         out = []
         for label, cid in (("Music", cfg.music_channel_id), ("Collab requests", cfg.collab_channel_id),
-                           ("Gallery", cfg.gallery_channel_id), ("Lounge", cfg.lounge_channel_id)):
+                           ("Gallery", cfg.gallery_channel_id), ("Lounge", cfg.lounge_channel_id),
+                           ("Porch", cfg.porch_channel_id), ("18+ porch", cfg.porch18_channel_id),
+                           ("Mod alerts", cfg.mod_channel_id), ("Multimedia gallery", cfg.showcase_channel_id)):
             ch = guild.get_channel(cid) if cid else None
             if ch is None:
                 continue
-            miss = missing_perms(ch)
+            miss = missing_perms(ch, MOD_PERMS if cid == cfg.mod_channel_id else NEEDED_PERMS)
             if miss:
                 out.append(f"⚠️ In {ch.mention} I'm missing: {', '.join(miss)}")
+        if cfg.porch18_channel_id:
+            ch = guild.get_channel(cfg.porch18_channel_id)
+            if ch is not None and not ch.is_nsfw():
+                out.append(f"⛔ {ch.mention} is no longer age-restricted: 18+ cards there are shown as 🔞-only "
+                           "and the 18+ feed is paused until it's age-restricted again.")
         if not out and cfg.music_channel_id and cfg.collab_channel_id:
             out.append("✅ Permissions look good.")
         return out
@@ -242,6 +275,10 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
         nightly_update="Post the midnight update in the lounge (default on)",
         reaction_milestones="Cheer posts that reach 3, 10, 20, 30, 50 reactions (default on)",
         milestone_channels="Where reactions are counted: AIAV channels only (default) or every channel",
+        stoop_feed="Post new SFW Stoop characters in the porch (default off)",
+        stoop_feed_18="Post new 18+ Stoop characters in the 18+ porch (default off)",
+        stoop_update_notes="Note character updates (v2 → v3) in their conversation threads (default on)",
+        stoop_reports="Also send 🚩 reports about Stoop characters to The Stoop's moderators (default on)",
     )
     @app_commands.choices(milestone_channels=[
         app_commands.Choice(name="AIAV channels + theme channels", value="aiav"),
@@ -251,7 +288,32 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
                            reply_timeout: Optional[app_commands.Range[int, 1, 1440]] = None,
                            nightly_update: Optional[bool] = None,
                            reaction_milestones: Optional[bool] = None,
-                           milestone_channels: Optional[app_commands.Choice[str]] = None) -> None:
+                           milestone_channels: Optional[app_commands.Choice[str]] = None,
+                           stoop_feed: Optional[bool] = None,
+                           stoop_feed_18: Optional[bool] = None,
+                           stoop_update_notes: Optional[bool] = None,
+                           stoop_reports: Optional[bool] = None) -> None:
+        import stoop_api
+        before = self.db.get_config(interaction.guild_id)
+        if stoop_feed is not None:
+            fields = {"stoop_feed": stoop_feed}
+            if stoop_feed and not (before and before.stoop_feed):
+                fields["stoop_feed_since"] = stoop_api.now_iso()     # only characters from now on
+            self.db.set_stoop_settings(interaction.guild_id, **fields)
+        if stoop_feed_18 is not None:
+            fields = {"stoop_feed18": stoop_feed_18}
+            if stoop_feed_18 and not (before and before.stoop_feed18):
+                fields["stoop_feed18_since"] = stoop_api.now_iso()
+            self.db.set_stoop_settings(interaction.guild_id, **fields)
+        if stoop_update_notes is not None:
+            self.db.set_stoop_settings(interaction.guild_id, stoop_notes=stoop_update_notes)
+        if stoop_reports is not None:
+            self.db.set_stoop_settings(interaction.guild_id, stoop_reports=stoop_reports)
+        if stoop_feed or stoop_feed_18:
+            # Start the change feed at the same moment, so nothing created in the next few minutes is missed.
+            for rating in ("sfw", "nsfw"):
+                if not self.db.kv_get(f"stoop_since_{rating}"):
+                    self.db.kv_set(f"stoop_since_{rating}", stoop_api.now_iso())
         if reaction_milestones is not None or milestone_channels is not None:
             self.db.set_milestone_settings(interaction.guild_id, enabled=reaction_milestones,
                                            scope=milestone_channels.value if milestone_channels else None)
@@ -265,10 +327,55 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
         lounge = "" if cfg and cfg.lounge_channel_id else " (set a lounge with `/aiav setup lounge:`)"
         milestones = "on" if (cfg is None or cfg.milestones) else "off"
         scope = "every channel" if cfg and cfg.milestone_scope == "all" else "AIAV + theme channels"
+        feed = "on" if cfg and cfg.stoop_feed else "off"
+        feed18 = "on" if cfg and cfg.stoop_feed18 else "off"
+        notes = "on" if (cfg is None or cfg.stoop_notes) else "off"
+        sreports = "on" if (cfg is None or cfg.stoop_reports) else "off"
+        porch_hint = "" if cfg and cfg.porch_channel_id else " (set a porch with `/aiav setup porch:`)"
         await reply(interaction,
             f"⏱️ Unused prompts are shortened (music) or removed (collab/gallery) after **{timeout} min**.\n"
             f"🌙 Nightly lounge update: **{nightly}**{lounge}\n"
-            f"🏆 Reaction milestones: **{milestones}** ({scope})")
+            f"🏆 Reaction milestones: **{milestones}** ({scope})\n"
+            f"🎭 Stoop arrival feed: **{feed}**{porch_hint} · 18+ feed: **{feed18}** · update notes: **{notes}**\n"
+            f"🚩 Reports also go to The Stoop's moderators: **{sreports}**")
+
+    @app_commands.command(name="gallery_report", description="Who was involved in AIAV gallery publications in a month")
+    @app_commands.describe(month="Which month, as YYYY-MM (default: last month)",
+                           public="Post the list in this channel instead of only showing it to you")
+    async def gallery_report_cmd(self, interaction: discord.Interaction, month: Optional[str] = None,
+                                 public: bool = False) -> None:
+        import gallery_report as G
+        cfg = self.db.get_config(interaction.guild_id)
+        channel = interaction.guild.get_channel(cfg.gallery_channel_id) if cfg and cfg.gallery_channel_id else None
+        if channel is None:
+            return await reply(interaction, "Set the gallery first with `/aiav setup gallery:`.")
+        try:
+            start, end, label = G.month_bounds(month)
+        except (ValueError, TypeError):
+            return await reply(interaction, "Please give the month as YYYY-MM, e.g. 2026-09.")
+        try:
+            pubs, counts, names = await G.count_gallery(self.db, interaction.guild, channel, start, end,
+                                                        self.bot.user.id if self.bot.user else None)
+        except discord.HTTPException as e:
+            log.warning("Gallery report failed: %s", e)
+            return await reply(interaction, f"I couldn't read {channel.mention}. Check I have Read Message History there.")
+        if not pubs:
+            return await reply(interaction, T.REPORT_EMPTY.format(channel=channel.mention, month=label))
+        lines = G.format_report(label, pubs, counts, names, T)
+        chunks, chunk = [], ""
+        for line in lines:
+            if len(chunk) + len(line) + 1 > 1900:
+                chunks.append(chunk)
+                chunk = ""
+            chunk += line + "\n"
+        chunks.append(chunk)
+        for c in chunks:
+            if public and interaction.channel is not None:
+                await interaction.channel.send(c, allowed_mentions=discord.AllowedMentions.none())
+            else:
+                await interaction.followup.send(c, ephemeral=True)
+        if public:
+            await reply(interaction, "Posted. ✅")
 
     @app_commands.command(name="update", description="Post an AIAV Club activity update in the lounge now")
     async def update_cmd(self, interaction: discord.Interaction) -> None:
@@ -293,7 +400,7 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
             "**AIAVBOT status**" + (f"  ·  🧩 `{label}`" if label else ""),
             f"🎵 Music: {fmt_channel(cfg.music_channel_id)}",
             f"🤝 Collab requests: {fmt_channel(cfg.collab_channel_id)}",
-            f"🖼️ Gallery: {fmt_channel(cfg.gallery_channel_id)}",
+            f"🖼️ Gallery: {fmt_channel(cfg.gallery_channel_id)} → mirrored to {fmt_channel(cfg.showcase_channel_id)}",
             f"💬 Lounge: {fmt_channel(cfg.lounge_channel_id)} · nightly update "
             + ("on" if cfg.nightly_update else "off"),
             f"⏱️ Unused prompts tidied after {cfg.reply_timeout_min} min",
@@ -310,12 +417,48 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
             lines.append("🏷️ Themes: *none active* (the theme button is hidden)")
 
         lines.append(f"🌐 Suno: {await self._suno_check()}")
+        lines += await self._porch_status(cfg)
 
         lines.append("📊 **Activity**")
         from datetime import datetime
         for label, stats in period_stats(self.db, guild.id, datetime.now().astimezone()):
             lines.append(f"**{label}:** {stats_line(stats)}")
-        await interaction.followup.send("\n".join(lines), ephemeral=True)
+            if cfg.porch_channel_id or cfg.porch18_channel_id:
+                lines.append(f"    {T.PORCH_STAT_TITLE}: {stats_line(stats, T.PORCH_STAT_LABELS)}")
+        # Discord messages max out at 2000 characters: send in chunks of whole lines.
+        chunk = ""
+        for line in lines:
+            if len(chunk) + len(line) + 1 > 1900:
+                await interaction.followup.send(chunk, ephemeral=True)
+                chunk = ""
+            chunk += line + "\n"
+        if chunk:
+            await interaction.followup.send(chunk, ephemeral=True)
+
+    async def _porch_status(self, cfg) -> list[str]:
+        porch = self.bot.get_cog("Porch")
+        lines = [f"🎭 Porch: {fmt_channel(cfg.porch_channel_id)} · feed " + ("on" if cfg.stoop_feed else "off")
+                 + f"  ·  🔞 18+ porch: {fmt_channel(cfg.porch18_channel_id)} · feed "
+                 + ("on" if cfg.stoop_feed18 else "off"),
+                 f"🛡️ Mod alerts: {fmt_channel(cfg.mod_channel_id)} · reports to The Stoop: "
+                 + ("on" if cfg.stoop_reports else "off")]
+        if porch is None:
+            return lines + ["🏡 The Stoop: porch module not loaded"]
+        client = porch.client
+        if not client.enabled:
+            return lines + ["🏡 The Stoop API: not configured (add STOOP_API_KEY to the env file)"]
+        stats = await porch.stoop_stats()
+        health = client.health()
+        icon = "✅" if health in ("ok", "not used yet") and stats is not None else "⚠️"
+        text = f"🏡 The Stoop API: {icon} {'working' if stats is not None else health}"
+        cards = (stats or {}).get("cards") if isinstance((stats or {}).get("cards"), dict) else None
+        if cards and isinstance(cards.get("total"), int):
+            nsfw = cards.get("nsfw") if isinstance(cards.get("nsfw"), int) else 0
+            text += f" · {cards['total']:,} characters ({cards['total'] - nsfw:,} SFW, {nsfw:,} 18+)"
+        counts = self.db.porch_counts()
+        text += (f"\n    tracking {counts['live']} live · {counts['missing']} unavailable · {counts['gone']} gone"
+                 f" · {client.requests_last_hour()} API calls in the last hour")
+        return lines + [text]
 
     async def _suno_check(self) -> str:
         row = self.db.conn.execute(

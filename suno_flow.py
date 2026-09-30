@@ -49,6 +49,8 @@ PANEL_COLOR = 0x9B7EDE
 GALLERY_COLOR = 0xF5B942
 MIN_PROMPT_TEXT = 15     # collab/gallery: ignore text-only messages shorter than this
 MAX_IMAGE_BYTES = 8 * 1024 * 1024   # re-upload images up to this size into bot cards
+RESPOND_DAYS = 90                    # "responding to a collab" lists requests from this many days back
+MAX_UPLOAD_TOTAL = 9 * 1024 * 1024   # stay under Discord's upload limit when copying several files
 
 
 # --------------------------------------------------------------------------- #
@@ -62,6 +64,17 @@ def short(text: Optional[str], limit: int) -> str:
 
 def one_line(text: str) -> str:
     return " ".join((text or "").split())
+
+
+def title_hint(text: Optional[str], limit: int = 60) -> Optional[str]:
+    """A suggested title from a post: its first real line, without links, cut at a word."""
+    for line in (text or "").splitlines():
+        line = one_line(discord.utils.remove_markdown(character_links.URL_RE.sub("", line))).strip(" -–—:|>")
+        if len(line) >= 4:
+            if len(line) > limit:
+                line = line[:limit].rsplit(" ", 1)[0].rstrip(",.;:") + "…"
+            return line
+    return None
 
 
 def song_title(share: Share) -> Optional[str]:
@@ -85,7 +98,8 @@ def parse_emoji(text: Optional[str]) -> Optional[discord.PartialEmoji]:
 
 def listen_label(song: dict, url: Optional[str]) -> str:
     if character_links.is_character(song):
-        return short(T.CHARACTER_OPEN.format(site=song.get("site") or character_links.site_for(url or "") or "the web"), 80)
+        site = song.get("site") or character_links.site_for(url or "") or "the web"
+        return short(T.STOOP_DOWNLOAD if site == "The Stoop" else T.CHARACTER_OPEN.format(site=site), 80)
     if song.get("site"):
         site = song["site"]
     elif not url or "suno." in url.lower():
@@ -274,11 +288,13 @@ class SongPick(ui.DynamicItem[ui.Select], template=r"aiav:pick:(?P<post_id>\d+)"
 
 
 class PromptButton(ui.DynamicItem[ui.Button],
-                   template=r"aiav:(?P<kind>c|g):(?P<action>yes|no):(?P<post_id>\d+)"):
-    """Yes/No buttons on the collab-channel and gallery prompts."""
+                   template=r"aiav:(?P<kind>c|g):(?P<action>yes|no|resp|done):(?P<post_id>\d+)"):
+    """Buttons on the collab-channel prompt (new / responding / finished / none) and the gallery prompt."""
 
     LABELS = {
         ("c", "yes"): (T.COLLAB_PROMPT_YES, discord.ButtonStyle.success),
+        ("c", "resp"): (T.COLLAB_PROMPT_RESP, discord.ButtonStyle.primary),
+        ("c", "done"): (T.COLLAB_PROMPT_DONE, discord.ButtonStyle.primary),
         ("c", "no"): (T.COLLAB_PROMPT_NO, discord.ButtonStyle.secondary),
         ("g", "yes"): (T.GALLERY_PROMPT_YES, discord.ButtonStyle.success),
         ("g", "no"): (T.GALLERY_PROMPT_NO, discord.ButtonStyle.secondary),
@@ -310,6 +326,14 @@ class PromptButton(ui.DynamicItem[ui.Button],
             await tell(interaction, flow.reminder_text(share, self.kind, interaction.user.display_name))
             flow.db.log(share.guild_id, share.post_id, interaction.user.id,
                         "not_request" if self.kind == "c" else "not_collab")
+        elif self.kind == "c" and self.action == "resp":
+            await ack(interaction, thinking=True)
+            await flow.offer_collab_pick(interaction, share)
+        elif self.kind == "c" and self.action == "done":
+            cfg = flow.db.get_config(share.guild_id)
+            if not cfg or not cfg.gallery_channel_id:
+                return await tell(interaction, T.FINISHED_NO_GALLERY)
+            await interaction.response.send_modal(GalleryModal(flow, share))
         elif self.kind == "c":
             await interaction.response.send_modal(CollabModal(flow, share))
         else:
@@ -368,6 +392,25 @@ class InterestedButton(ui.DynamicItem[ui.Button],
         flow.db.log(row["guild_id"], self.post_id, interaction.user.id, "interested")
 
 
+class CollabPickView(ui.View):
+    """Private dropdown of recent collab requests, for '💬 I'm responding to a collab'."""
+
+    def __init__(self, flow: "SunoFlow", post_id: int, options: list[discord.SelectOption]):
+        super().__init__(timeout=600)
+        self.flow, self.post_id = flow, post_id
+        self.pick = ui.Select(placeholder=T.RESPOND_PLACEHOLDER, options=options, min_values=1, max_values=1)
+        self.pick.callback = self.on_pick
+        self.add_item(self.pick)
+
+    async def on_pick(self, interaction: discord.Interaction) -> None:
+        try:
+            await ack(interaction, thinking=True)
+            await self.flow.respond_to_collab(interaction, self.post_id, int(self.pick.values[0]))
+        except Exception:
+            log.exception("Responding to a collab failed")
+            await tell(interaction, T.GENERIC_ERROR)
+
+
 # --------------------------------------------------------------------------- #
 # Pop-up forms (modals)
 # --------------------------------------------------------------------------- #
@@ -406,6 +449,12 @@ class CollabModal(_BaseModal):
     def __init__(self, flow: "SunoFlow", share: Share):
         is_char = flow.is_character_share(share)
         super().__init__(flow, share, T.COLLAB_MODAL_TITLE_CHARACTER if is_char else T.COLLAB_MODAL_TITLE)
+        # First: the name. Prefilled with a suggestion, so it's one tap to keep it.
+        self.thread_title = ui.TextInput(style=discord.TextStyle.short,
+                                         default=short(flow.default_title(share), T.THREAD_TITLE_MAX),
+                                         min_length=2, max_length=T.THREAD_TITLE_MAX, required=True)
+        self.add_item(ui.Label(text=T.COLLAB_TITLE_LABEL, description=T.COLLAB_TITLE_DESCRIPTION,
+                               component=self.thread_title))
         type_list = T.CHARACTER_COLLAB_TYPES if is_char else T.COLLAB_TYPES
         self.types = ui.Select(
             options=[discord.SelectOption(label=label, value=value, emoji=emoji, description=desc)
@@ -421,12 +470,18 @@ class CollabModal(_BaseModal):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await ack(interaction)
         await self.flow.post_collab_request(
-            interaction, self.post_id, list(self.types.values), self.note.value.strip() or None)
+            interaction, self.post_id, list(self.types.values), self.note.value.strip() or None,
+            thread_title=one_line(self.thread_title.value) or None)
 
 
 class ThreadModal(_BaseModal):
     def __init__(self, flow: "SunoFlow", share: Share):
         super().__init__(flow, share, T.THREAD_MODAL_TITLE)
+        default = song_title(share) or T.THREAD_FALLBACK_TITLE.format(name=share.poster_name)
+        self.thread_title = ui.TextInput(style=discord.TextStyle.short, default=short(default, T.THREAD_TITLE_MAX),
+                                         min_length=2, max_length=T.THREAD_TITLE_MAX, required=True)
+        self.add_item(ui.Label(text=T.THREAD_TITLE_LABEL, description=T.THREAD_TITLE_DESCRIPTION,
+                               component=self.thread_title))
         self.wants = ui.Select(
             options=[discord.SelectOption(label=label, value=value, emoji=emoji)
                      for value, label, emoji in T.RESPONSE_TYPES],
@@ -448,8 +503,9 @@ class ThreadModal(_BaseModal):
         title = song_title(share) or T.THREAD_FALLBACK_TITLE.format(name=share.poster_name)
         thread = None
         if channel is not None:
+            name = one_line(self.thread_title.value) or title
             thread = await flow.thread_for_message(
-                channel.get_partial_message(share.post_id), T.THREAD_NAME.format(title=title))
+                channel.get_partial_message(share.post_id), T.THREAD_NAME.format(title=name))
         if thread is None:
             return await flow.update_panel(interaction, share, notice=T.THREAD_FAILED)
 
@@ -509,10 +565,9 @@ class GalleryModal(_BaseModal):
 
     def __init__(self, flow: "SunoFlow", share: Share):
         super().__init__(flow, share, T.GALLERY_MODAL_TITLE)
-        default_title = song_title(share)
+        default_title = song_title(share) or share.title_hint or T.GALLERY_DEFAULT_TITLE
         self.title_in = ui.TextInput(style=discord.TextStyle.short, placeholder=T.GALLERY_TITLE_PLACEHOLDER,
-                                     default=short(default_title, 100) if default_title else None,
-                                     max_length=100, required=False)
+                                     default=short(default_title, 100), min_length=2, max_length=100, required=True)
         self.add_item(ui.Label(text=T.GALLERY_TITLE_LABEL, component=self.title_in))
         self.members = ui.UserSelect(min_values=0, max_values=10, required=False)
         self.add_item(ui.Label(text=T.GALLERY_MEMBERS_LABEL, description=T.GALLERY_MEMBERS_DESCRIPTION,
@@ -596,6 +651,9 @@ class SunoFlow(commands.Cog):
         name = message.author.display_name
         self.db.create_share(message.id, message.guild.id, message.channel.id,
                              message.author.id, name, links, kind=kind)
+        hint = title_hint(message.content)
+        if hint:
+            self.db.update_share(message.id, title_hint=hint)
         if card_info:
             self.db.update_share(message.id, songs=[card_info])
         share = self.db.get_share(message.id)
@@ -606,6 +664,8 @@ class SunoFlow(commands.Cog):
         if kind == "collab":
             view.add_item(PromptButton("c", "yes", message.id,
                                        label=T.COLLAB_PROMPT_CHARACTER_YES if is_char else None))
+            view.add_item(PromptButton("c", "resp", message.id))
+            view.add_item(PromptButton("c", "done", message.id))
             view.add_item(PromptButton("c", "no", message.id))
             content = (T.COLLAB_PROMPT_CHARACTER if is_char else T.COLLAB_PROMPT).format(name=escape_markdown(name))
         else:
@@ -691,6 +751,9 @@ class SunoFlow(commands.Cog):
             if hit and time.time() - hit[0] < CACHE_TTL:
                 return hit[1]
             if character_links.site_for(url):
+                stoop_info = await self.stoop_info(url)
+                if stoop_info is not None:
+                    return stoop_info
                 info = await character_links.fetch_character(url, self.http)
                 if info.get("title"):
                     self.cache[url] = (time.time(), info)
@@ -712,8 +775,60 @@ class SunoFlow(commands.Cog):
         songs = list(await asyncio.gather(*(one(u) for u in share.links)))
         self.db.update_share(share.post_id, songs=songs)
         for s in songs:
-            self.db.remember_song(s, share.guild_id, share.poster_id, share.post_id)
+            if s.get("stoop") and s.get("id") and share.kind == "collab":
+                # A member's post in the (SFW) collab channel links this card: watch it for removal / 18+.
+                self.db.add_stoop_ref(share.post_id, s["id"], share.guild_id, share.channel_id, "member_post",
+                                      False, state="alerted" if s.get("nsfw") else "ok")
+            elif not character_links.is_character(s):
+                self.db.remember_song(s, share.guild_id, share.poster_id, share.post_id)
         return songs
+
+    async def stoop_info(self, url: str) -> Optional[dict]:
+        """A Stoop link, read through the partner API (the Porch cog owns the client).
+        None = not a Stoop card link or the API can't be asked (fall back to the link preview).
+        An unavailable card (404) returns a blank character with no name, art or description."""
+        import stoop_api
+        porch = self.bot.get_cog("Porch")
+        stoop_id = stoop_api.card_id_from_url(url)
+        if porch is None or not stoop_id or not porch.client.enabled:
+            return None
+        result, card = await porch.lookup(stoop_id)
+        if result == "ok" and card:
+            return stoop_api.to_character_info(card)
+        if result == "missing":
+            info = character_links._blank(stoop_api.card_url(stoop_id), "The Stoop")
+            info.update(id=stoop_id, stoop=True, unavailable=True)
+            return info
+        # The API couldn't be asked: name + link only (rating unknown), and re-check it soon.
+        import porch as porch_mod
+        preview = await character_links.fetch_character(url, self.http)
+        porch.db.note_stoop_pending(stoop_id)
+        return porch_mod.neutral_placeholder(preview, stoop_id)
+
+    async def fresh_character(self, song: dict) -> dict:
+        """Re-check a Stoop character right before it's shown on a new card (its rating may have changed)."""
+        import stoop_api
+        porch = self.bot.get_cog("Porch")
+        if not (song.get("stoop") and song.get("id")) or porch is None or not porch.client.enabled:
+            return song
+        result, card = await porch.lookup(song["id"], max_age=0)      # always ask: collab posts are rare
+        if result == "ok" and card:
+            fresh = stoop_api.to_character_info(card)
+            fresh["nsfw"] = fresh["nsfw"] or bool(song.get("nsfw"))   # an 18+-porch origin stays 18+
+            return fresh
+        if result == "missing":
+            gone = dict(song)
+            gone.update(unavailable=True, description=None, tags=[], stoop_asset=None, image_url=None)
+            return gone
+        return song
+
+    async def character_art(self, song: dict) -> Optional[discord.File]:
+        """The Stoop card's art as an attachment (it needs the API key, so Discord can't load it by URL).
+        Never for 18+ characters: collab and theme channels are SFW."""
+        if not song.get("stoop_asset") or song.get("nsfw"):
+            return None
+        porch = self.bot.get_cog("Porch")
+        return await porch.image_file(song["stoop_asset"]) if porch else None
 
     async def get_songs(self, share: Share, wait: float) -> Optional[list[dict]]:
         if share.songs is not None:
@@ -846,16 +961,125 @@ class SunoFlow(commands.Cog):
             content, embed=embed, view=view, files=files, mention_author=False,
             allowed_mentions=discord.AllowedMentions.none())
 
+    # ------------------------------------------------------------ titles
+    def default_title(self, share: Share) -> str:
+        """A sensible default name for a collab: song / character title, else '<name>'s collab idea'."""
+        song = share.song or {}
+        if song.get("title"):
+            return song["title"]
+        if self.is_character_share(share):
+            return T.CHARACTER_FALLBACK_TITLE.format(name=share.poster_name)
+        if share.title_hint:
+            return share.title_hint
+        if share.kind == "music":
+            return T.THREAD_FALLBACK_TITLE.format(name=share.poster_name)
+        return T.COLLAB_IDEA_TITLE.format(name=share.poster_name)
+
+    def collab_title(self, row) -> str:
+        if row["title"]:
+            return row["title"]
+        share = self.db.get_share(row["post_id"])
+        if share and share.songs and row["song_idx"] < len(share.songs) and share.songs[row["song_idx"]].get("title"):
+            return share.songs[row["song_idx"]]["title"]
+        return T.COLLAB_IDEA_TITLE.format(name=share.poster_name if share else "Someone")
+
+    # ------------------------------------------------------------ responding to a collab
+    async def offer_collab_pick(self, interaction: discord.Interaction, share: Share) -> None:
+        """'💬 I'm responding to a collab': a private list of recent collab requests to pick from."""
+        rows = self.db.recent_collabs(share.guild_id, time.time() - RESPOND_DAYS * 86400, 25)
+        if not rows:
+            return await tell(interaction, T.RESPOND_NONE)
+        options = []
+        for r in rows:
+            member = interaction.guild.get_member(r["creator_id"]) if interaction.guild else None
+            when = time.strftime("%b %d", time.localtime(r["created_at"]))
+            options.append(discord.SelectOption(
+                label=short(self.collab_title(r), 100), value=str(r["card_id"]),
+                description=short(T.RESPOND_OPTION_DESC.format(
+                    creator=member.display_name if member else "a Dreamer", when=when), 100)))
+        await interaction.followup.send(T.RESPOND_PICK, view=CollabPickView(self, share.post_id, options),
+                                        ephemeral=True)
+
+    async def respond_to_collab(self, interaction: discord.Interaction, post_id: int, card_id: int) -> None:
+        """Post the member's message (text + files) in the chosen collab's thread and ping the creator."""
+        share = self.db.get_share(post_id)
+        row = self.db.get_collab(card_id)
+        if not share or not row:
+            return await tell(interaction, T.SHARE_GONE)
+        thread = await self.collab_thread(row)
+        if thread is None:
+            return await tell(interaction, T.RESPOND_THREAD_GONE)
+        src = await self.fetch_source(share)
+        user = interaction.user
+        creator = f"<@{row['creator_id']}>"
+        parts = [T.RESPOND_POST.format(responder=user.mention, creator=creator)]
+        text = (src.content.strip() if src is not None else "")
+        if text:
+            parts.append(short("\n".join(f"> {ln}" for ln in text.splitlines()), 1500))
+        files, skipped = await self.copy_attachments(src)
+        if skipped:
+            parts.append(T.RESPOND_FILES_SKIPPED)
+        parts.append(T.RESPOND_ORIGINAL.format(url=share.jump_url))
+        try:
+            msg = await thread.send("\n".join(parts), files=files, allowed_mentions=discord.AllowedMentions(
+                users=[user, discord.Object(row["creator_id"])]))
+        except discord.HTTPException as e:
+            log.warning("Couldn't post collab response: %s", e)
+            return await tell(interaction, T.RESPOND_THREAD_GONE)
+        self.db.add_interest(card_id, user.id)
+        self.db.update_share(share.post_id, status="kept")
+        await self.delete_public_reply(share)
+        await tell(interaction, T.RESPOND_DONE.format(url=msg.jump_url))
+        self.db.log(share.guild_id, share.post_id, user.id, "collab_response")
+
+    async def collab_thread(self, row) -> Optional[discord.Thread]:
+        """The thread on a collab request card (its id is the card's message id if not stored)."""
+        tid = row["thread_id"] or row["card_id"]
+        guild = self.bot.get_guild(row["guild_id"]) if hasattr(self.bot, "get_guild") else None
+        th = guild.get_thread(tid) if guild else None
+        if th is None:
+            try:
+                th = await self.bot.fetch_channel(tid)
+            except discord.HTTPException:
+                th = None
+        if th is None:                       # no thread yet: make one on the card
+            channel = self.bot.get_channel(row["channel_id"])
+            if channel is not None:
+                th = await self.thread_for_message(channel.get_partial_message(row["card_id"]),
+                                                   T.COLLAB_THREAD_NAME.format(title=self.collab_title(row)))
+        return th
+
+    @staticmethod
+    async def copy_attachments(message: Optional[discord.Message],
+                               max_files: int = 10) -> tuple[list[discord.File], bool]:
+        """Re-upload a message's attachments (each up to 8 MB). Returns (files, some were skipped)."""
+        if message is None or not message.attachments:
+            return [], False
+        files, skipped, total = [], False, 0
+        for a in message.attachments[:max_files]:
+            if a.size > MAX_IMAGE_BYTES or total + a.size > MAX_UPLOAD_TOTAL:
+                skipped = True
+                continue
+            total += a.size
+            try:
+                files.append(await a.to_file(spoiler=a.is_spoiler()))
+            except discord.HTTPException:
+                skipped = True
+        return files, skipped or len(message.attachments) > max_files
+
     # ------------------------------------------------------------ collab requests
     async def post_collab_request(self, interaction: discord.Interaction, post_id: int,
-                                  type_values: list[str], note: Optional[str]) -> None:
+                                  type_values: list[str], note: Optional[str],
+                                  thread_title: Optional[str] = None) -> None:
         """Post a collab request card + its own thread.
 
         From the music panel: a new card in the collab channel.
         From a post in the collab channel: the bot's reply under the post becomes the card."""
         db, user = self.db, interaction.user
         share = db.get_share(post_id)
-        from_music = share.kind == "music"
+        from_porch = share.kind == "porch"
+        from_music = share.kind == "music" or from_porch      # both post a NEW card in the collab channel
+        original_url = share.origin_url or share.jump_url
 
         if share.links and share.songs is None:
             await self.get_songs(share, wait=8)
@@ -864,7 +1088,7 @@ class SunoFlow(commands.Cog):
         is_char = self.is_character_share(share)
         type_list = T.CHARACTER_COLLAB_TYPES if is_char else T.COLLAB_TYPES
         types = [t for t in type_list if t[0] in type_values]
-        song = share.song or {}
+        song = await self.fresh_character(share.song or {})
         song_url = song.get("url") or share.link
         if is_char:
             title, icon = song.get("title") or T.CHARACTER_FALLBACK_TITLE.format(name=share.poster_name), "🎭"
@@ -878,7 +1102,11 @@ class SunoFlow(commands.Cog):
         # Posts made in the collab channel: quote what they wrote so the card explains itself.
         src = None if from_music else await self.fetch_source(share)
 
-        embed = discord.Embed(title=short(f"{icon} {title}", 256), url=song_url, color=PANEL_COLOR)
+        # The member's chosen name heads the card and names the thread; the song/character stays visible.
+        named = thread_title if thread_title and thread_title != title else None
+        embed = discord.Embed(title=short(f"{icon} {named or title}", 256), url=song_url, color=PANEL_COLOR)
+        if named and (song.get("title") or is_char):
+            embed.add_field(name=T.COLLAB_ORIGINAL_TITLE_FIELD, value=short(f"{icon} {title}", 256), inline=False)
         embed.set_author(name=user.display_name, icon_url=user.display_avatar.url)
         idea = (src.content.strip() if src is not None else "")
         if idea and character_links.URL_RE.sub("", idea).strip():      # skip if the post is only link(s)
@@ -891,7 +1119,10 @@ class SunoFlow(commands.Cog):
             if song.get("tags") and not song.get("nsfw"):
                 embed.add_field(name=T.CHARACTER_TAGS_FIELD,
                                 value=short(", ".join(song["tags"][:10]), 200), inline=False)
-            if song.get("creator"):
+            if song.get("creator") and song.get("stoop"):
+                import porch as porch_mod
+                embed.add_field(name=T.CHARACTER_CREATOR_FIELD, value=short(porch_mod.stoop_creator_line(song), 1024))
+            elif song.get("creator"):
                 embed.add_field(name=T.CHARACTER_CREATOR_FIELD, value=short(escape_markdown(song["creator"]), 100))
         embed.add_field(name=T.COLLAB_LOOKING_FOR,
                         value="\n".join(f"{e} {label}" for _, label, e, _ in types), inline=False)
@@ -902,7 +1133,16 @@ class SunoFlow(commands.Cog):
 
         files: list[discord.File] = []
         adult = bool(song.get("nsfw"))          # 18+-tagged character cards: no art on the request card
-        if song.get("image_url") and not adult:
+        if song.get("unavailable"):
+            embed.add_field(name=T.CHARACTER_ABOUT_FIELD, value=T.COLLAB_CHARACTER_UNAVAILABLE, inline=False)
+        art = await self.character_art(song) if not adult else None
+        if art:
+            files = [art]
+            if from_music:
+                embed.set_image(url=f"attachment://{art.filename}")
+            else:
+                embed.set_thumbnail(url=f"attachment://{art.filename}")
+        elif song.get("image_url") and not adult:
             if from_music:
                 embed.set_image(url=song["image_url"])
             else:
@@ -917,7 +1157,7 @@ class SunoFlow(commands.Cog):
         view.add_item(InterestedButton(share.post_id, share.selected))
         if song_url:
             view.add_item(ui.Button(label=listen_label(song, song_url), url=song_url))
-        view.add_item(ui.Button(label=T.COLLAB_ORIGINAL, url=share.jump_url))   # always link the original
+        view.add_item(ui.Button(label=T.COLLAB_ORIGINAL, url=original_url))   # always link the original
         content = T.COLLAB_CARD_HEADER.format(mention=user.mention)
 
         try:
@@ -925,32 +1165,41 @@ class SunoFlow(commands.Cog):
                 cfg = db.get_config(share.guild_id)
                 channel = interaction.guild.get_channel(cfg.collab_channel_id) if cfg else None
                 if channel is None:
+                    if from_porch:
+                        return await tell(interaction, T.COLLAB_NO_CHANNEL)
                     return await self.update_panel(interaction, share, notice=T.COLLAB_NO_CHANNEL)
-                card = await channel.send(content, embed=embed, view=view)
+                card = await channel.send(content, embed=embed, view=view, files=files)
             else:
                 card = await self.put_card(share, content, embed, view, files)
         except discord.HTTPException as e:
             log.warning("Couldn't post collab card: %s", e)
             card = None
         if card is None:
-            if from_music:
+            if from_music and not from_porch:
                 return await self.update_panel(interaction, share, notice=T.COLLAB_FAILED)
             return await tell(interaction, T.COLLAB_FAILED)
 
-        thread = await self.thread_for_message(card, T.COLLAB_THREAD_NAME.format(title=title))
+        thread = await self.thread_for_message(card, T.COLLAB_THREAD_NAME.format(title=thread_title or title))
         if thread:
             try:
                 await thread.send(T.COLLAB_THREAD_INTRO.format(title=escape_markdown(title), mention=user.mention)
-                                  + "\n" + T.COLLAB_THREAD_ORIGINAL.format(url=share.jump_url),
+                                  + "\n" + T.COLLAB_THREAD_ORIGINAL.format(url=original_url),
                                   allowed_mentions=discord.AllowedMentions(users=[user]))
             except discord.HTTPException as e:
                 log.warning("Couldn't post in collab thread: %s", e)
 
         db.add_collab(card.id, share.guild_id, card.channel.id, share.post_id, share.selected,
-                      share.poster_id, song.get("id"), [t[0] for t in types], note, None)
+                      share.poster_id, song.get("id"), [t[0] for t in types], note, None,
+                      title=thread_title or title, thread_id=thread.id if thread else None)
+        if song.get("stoop") and song.get("id"):
+            # Watch the card: if it's removed or becomes 18+, the request card loses its art and blurb.
+            db.add_stoop_ref(card.id, song["id"], share.guild_id, card.channel.id, "collab_card", False,
+                             state="stripped" if adult or song.get("unavailable") else "ok")
         db.update_share(share.post_id, status="kept")
         share = db.get_share(post_id)
-        if from_music:
+        if from_porch:
+            await tell(interaction, T.COLLAB_POSTED.format(url=card.jump_url))
+        elif from_music:
             await self.update_panel(interaction, share, notice=T.COLLAB_POSTED.format(url=card.jump_url))
             await self.refresh_public_reply(share)
         else:
@@ -961,9 +1210,14 @@ class SunoFlow(commands.Cog):
     async def post_gallery_collab(self, interaction: discord.Interaction, post_id: int, *,
                                   title: Optional[str], members: list, others: Optional[str],
                                   note: Optional[str]) -> None:
-        """Present a collab result: congratulations card under the post + a comment thread."""
+        """Present a collab result: congratulations card + a comment thread, mirrored to the multimedia gallery.
+
+        Posted in the gallery channel: the bot's prompt under the post becomes the card.
+        Posted in the collab channel ("🎉 It's a finished collab"): a new card goes to the gallery channel,
+        carrying the post's files, and the prompt in the collab channel is removed."""
         db, user = self.db, interaction.user
         share = db.get_share(post_id)
+        moved = share.kind == "collab"
         if share.links and share.songs is None:
             await self.get_songs(share, wait=8)
             share = db.get_share(post_id)
@@ -981,35 +1235,23 @@ class SunoFlow(commands.Cog):
         if others:
             credits.append(escape_markdown(others))
 
-        embed = discord.Embed(title=short(f"🎉 {title}", 256), url=song.get("url"), color=GALLERY_COLOR)
-        desc = [T.GALLERY_CONGRATS]
-        embed.add_field(name=T.GALLERY_CREATED_BY, value=short(" · ".join(credits), 1024), inline=False)
-        if note:
-            embed.add_field(name=T.GALLERY_ABOUT, value=short(note, 1024), inline=False)
-        if song.get("style"):
-            embed.add_field(name=T.COLLAB_STYLE_FIELD, value=short(song["style"], 200), inline=False)
-
-        files: list[discord.File] = []
-        f, spoiler, has_video = await self.first_image(await self.fetch_source(share))
-        if f and not spoiler:
-            files = [f]
-            embed.set_image(url=f"attachment://{f.filename}")
-        elif f and spoiler:
-            files = [f]                       # stays spoilered as a plain attachment
-            desc.append(T.GALLERY_SPOILER_NOTE)
-        elif song.get("image_url"):
-            embed.set_image(url=song["image_url"])
-        if has_video:
-            desc.append(T.GALLERY_VIDEO_NOTE)
-        embed.description = "\n".join(desc)
-        embed.set_footer(text=T.GALLERY_FOOTER)
-
+        src = await self.fetch_source(share)
+        embed, files = await self.gallery_embed(share, song, title, credits, note, src, all_files=moved)
         view = ui.View(timeout=None)
         if song.get("url"):
             view.add_item(ui.Button(label=listen_label(song, song["url"]), url=song["url"]))
+        if moved:
+            view.add_item(ui.Button(label=T.COLLAB_ORIGINAL, url=share.jump_url))
 
+        cfg = db.get_config(share.guild_id)
         try:
-            card = await self.put_card(share, T.GALLERY_HEADER, embed, view, files)
+            if moved:
+                gallery = self.bot.get_channel(cfg.gallery_channel_id) if cfg and cfg.gallery_channel_id else None
+                if gallery is None:
+                    return await tell(interaction, T.FINISHED_NO_GALLERY)
+                card = await gallery.send(T.GALLERY_HEADER, embed=embed, view=view, files=files)
+            else:
+                card = await self.put_card(share, T.GALLERY_HEADER, embed, view, files)
         except discord.HTTPException as e:
             log.warning("Couldn't post gallery card: %s", e)
             card = None
@@ -1030,8 +1272,70 @@ class SunoFlow(commands.Cog):
                              thread.id if thread else None, user.id, title,
                              [m.id for m in collaborators], others, note)
         db.update_share(share.post_id, status="kept")
-        await tell(interaction, T.GALLERY_POSTED.format(url=(thread or card).jump_url))
+        await self.mirror_gallery_card(share, card, thread, song, title, credits, note, src)
+        if moved:
+            await self.delete_public_reply(share)            # the prompt in the collab channel
+            await tell(interaction, T.FINISHED_POSTED.format(url=(thread or card).jump_url))
+        else:
+            await tell(interaction, T.GALLERY_POSTED.format(url=(thread or card).jump_url))
         db.log(share.guild_id, share.post_id, user.id, "gallery_collab")
+
+    async def gallery_embed(self, share: Share, song: dict, title: str, credits: list[str], note: Optional[str],
+                            src: Optional[discord.Message], *, all_files: bool) -> tuple[discord.Embed, list]:
+        """The congratulations embed + files. all_files: carry every attachment (the post isn't in this channel)."""
+        embed = discord.Embed(title=short(f"🎉 {title}", 256), url=song.get("url"), color=GALLERY_COLOR)
+        desc = [T.GALLERY_CONGRATS]
+        embed.add_field(name=T.GALLERY_CREATED_BY, value=short(" · ".join(credits), 1024), inline=False)
+        if note:
+            embed.add_field(name=T.GALLERY_ABOUT, value=short(note, 1024), inline=False)
+        if song.get("style"):
+            embed.add_field(name=T.COLLAB_STYLE_FIELD, value=short(song["style"], 200), inline=False)
+
+        files: list[discord.File] = []
+        if all_files:
+            files, _ = await self.copy_attachments(src)
+            img = next((f for f in files if (f.filename or "").lower().rsplit(".", 1)[-1]
+                        in ("png", "jpg", "jpeg", "gif", "webp") and not f.spoiler), None)
+            if img:
+                embed.set_image(url=f"attachment://{img.filename}")
+            elif song.get("image_url"):
+                embed.set_image(url=song["image_url"])
+        else:
+            f, spoiler, has_video = await self.first_image(src)
+            if f and not spoiler:
+                files = [f]
+                embed.set_image(url=f"attachment://{f.filename}")
+            elif f and spoiler:
+                files = [f]                       # stays spoilered as a plain attachment
+                desc.append(T.GALLERY_SPOILER_NOTE)
+            elif song.get("image_url"):
+                embed.set_image(url=song["image_url"])
+            if has_video:
+                desc.append(T.GALLERY_VIDEO_NOTE)
+        embed.description = "\n".join(desc)
+        embed.set_footer(text=T.GALLERY_FOOTER)
+        return embed, files
+
+    async def mirror_gallery_card(self, share: Share, card: discord.Message, thread: Optional[discord.Thread],
+                                  song: dict, title: str, credits: list[str], note: Optional[str],
+                                  src: Optional[discord.Message]) -> None:
+        """Every presented collab also goes to the multimedia gallery (/aiav setup showcase:), with its files."""
+        cfg = self.db.get_config(share.guild_id)
+        showcase = self.bot.get_channel(cfg.showcase_channel_id) if cfg and cfg.showcase_channel_id else None
+        if showcase is None or showcase.id == card.channel.id:
+            return
+        embed, files = await self.gallery_embed(share, song, title, credits, note, src, all_files=True)
+        view = ui.View(timeout=None)
+        if song.get("url"):
+            view.add_item(ui.Button(label=listen_label(song, song["url"]), url=song["url"]))
+        view.add_item(ui.Button(label=T.MIRROR_BUTTON, url=(thread or card).jump_url))
+        try:
+            mirror = await showcase.send(T.MIRROR_HEADER.format(credits=" · ".join(credits)), embed=embed,
+                                         view=view, files=files, allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException as e:
+            log.warning("Couldn't mirror to the multimedia gallery: %s", e)
+            return
+        self.db.set_gallery_mirror(card.id, mirror.id, showcase.id)
 
     # ------------------------------------------------------------ public reply
     def public_reply_view(self, share: Share) -> ui.View:
