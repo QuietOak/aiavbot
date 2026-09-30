@@ -282,6 +282,9 @@ class PorchButton(ui.DynamicItem[ui.Button], template=r"porch:(?P<action>hi|met|
                 return await tell(interaction, T.PORCH_ADULT_BUTTONS)
             if self.action == "collab":
                 return await porch.start_collab(interaction, post)     # opens a pop-up: must answer first
+            if self.action == "hi" and not post["thread_id"]:
+                char, _ = porch.char_for_post(post)                    # name the thread first (a pop-up)
+                return await interaction.response.send_modal(ThreadTitleModal(porch, post, char))
             await ack(interaction)
             if self.action == "hi":
                 await porch.say_hi(interaction, post)
@@ -290,6 +293,28 @@ class PorchButton(ui.DynamicItem[ui.Button], template=r"porch:(?P<action>hi|met|
         except Exception:
             log.exception("Porch button %s failed", self.action)
             await tell(interaction, T.GENERIC_ERROR)
+
+
+class ThreadTitleModal(ui.Modal):
+    """🧵 Start a thread: name the conversation (prefilled with the character's name)."""
+
+    def __init__(self, porch: "Porch", post: dict, char: Optional[dict]):
+        super().__init__(title=T.PORCH_THREAD_MODAL_TITLE, timeout=900)
+        self.porch, self.mid = porch, post["message_id"]
+        self.name = ui.TextInput(style=discord.TextStyle.short, default=short((char or {}).get("title") or "", 90) or None,
+                                 max_length=T.THREAD_TITLE_MAX, required=False)
+        self.add_item(ui.Label(text=T.THREAD_TITLE_LABEL, description=T.THREAD_TITLE_DESCRIPTION, component=self.name))
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await ack(interaction)
+        post = self.porch.db.porch_post(self.mid)
+        if not post:
+            return await tell(interaction, T.PORCH_CARD_GONE)
+        await self.porch.say_hi(interaction, post, title=" ".join(self.name.value.split()) or None)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        log.exception("Thread title form failed", exc_info=error)
+        await tell(interaction, T.GENERIC_ERROR)
 
 
 class ReportModal(ui.Modal):
@@ -593,7 +618,7 @@ class Porch(commands.Cog):
             self.db.delete_porch_post(payload.message_id)
 
     # ------------------------------------------------------------ buttons
-    async def say_hi(self, interaction: discord.Interaction, post: dict) -> None:
+    async def say_hi(self, interaction: discord.Interaction, post: dict, title: Optional[str] = None) -> None:
         if post["stoop_id"]:
             await self.fresh_card(post["stoop_id"])
             post = self.db.porch_post(post["message_id"]) or post
@@ -601,13 +626,13 @@ class Porch(commands.Cog):
                 return await tell(interaction, T.PORCH_STALE)
         char, _ = self.char_for_post(post)
         name = (char or {}).get("title") or "this character"
-        thread = await self.hi_thread(post, char)
+        thread = await self.hi_thread(post, char, title)
         if thread is None:
             return await tell(interaction, T.THREAD_FAILED)
         await tell(interaction, T.PORCH_HI_DONE.format(name=escape_markdown(name), url=thread.jump_url))
         self.db.log(post["guild_id"], post["message_id"], interaction.user.id, "porch_hi")
 
-    async def hi_thread(self, post: dict, char: Optional[dict]) -> Optional[discord.Thread]:
+    async def hi_thread(self, post: dict, char: Optional[dict], title: Optional[str] = None) -> Optional[discord.Thread]:
         """The card's conversation thread, created (with an intro) the first time."""
         channel = self.bot.get_channel(post["channel_id"])
         if channel is None:
@@ -626,7 +651,7 @@ class Porch(commands.Cog):
         name = (char or {}).get("title") or "this character"
         flow = self.bot.get_cog("SunoFlow")
         msg = channel.get_partial_message(post["message_id"])
-        thread = await flow.thread_for_message(msg, T.PORCH_HI_THREAD.format(name=name)) if flow else None
+        thread = await flow.thread_for_message(msg, T.PORCH_HI_THREAD.format(name=title or name)) if flow else None
         if thread is None:
             return None
         if not post["thread_id"]:

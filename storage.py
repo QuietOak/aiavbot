@@ -247,6 +247,7 @@ class GuildConfig:
     stoop_feed18: int = 0            # 18+ arrival feed in the age-restricted porch
     stoop_notes: int = 1             # "✨ got an update" notes in conversation threads
     stoop_reports: int = 1           # also send 🚩 reports about Stoop characters to The Stoop's moderators
+    showcase_channel_id: Optional[int] = None   # multimedia gallery: every presented collab is mirrored here
     stoop_feed_since: Optional[str] = None     # ISO time the SFW feed was turned on (no backlog before it)
     stoop_feed18_since: Optional[str] = None
 
@@ -343,9 +344,19 @@ class Storage:
                          ("mod_channel_id", "INTEGER"), ("stoop_feed", "INTEGER NOT NULL DEFAULT 0"),
                          ("stoop_feed18", "INTEGER NOT NULL DEFAULT 0"), ("stoop_notes", "INTEGER NOT NULL DEFAULT 1"),
                          ("stoop_feed_since", "TEXT"), ("stoop_feed18_since", "TEXT"),
-                         ("stoop_reports", "INTEGER NOT NULL DEFAULT 1")):
+                         ("stoop_reports", "INTEGER NOT NULL DEFAULT 1"), ("showcase_channel_id", "INTEGER")):
             if col not in cols:
                 self.conn.execute(f"ALTER TABLE guild_config ADD COLUMN {col} {ddl}")
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(collab_requests)")}
+        if "title" not in cols:
+            self.conn.execute("ALTER TABLE collab_requests ADD COLUMN title TEXT")
+        if "thread_id" not in cols:
+            self.conn.execute("ALTER TABLE collab_requests ADD COLUMN thread_id INTEGER")
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(gallery_entries)")}
+        if "mirror_id" not in cols:
+            self.conn.execute("ALTER TABLE gallery_entries ADD COLUMN mirror_id INTEGER")
+        if "mirror_channel_id" not in cols:
+            self.conn.execute("ALTER TABLE gallery_entries ADD COLUMN mirror_channel_id INTEGER")
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(porch_reports)")}
         if "stoop_status" not in cols:
             self.conn.execute("ALTER TABLE porch_reports ADD COLUMN stoop_status TEXT")
@@ -388,7 +399,8 @@ class Storage:
             if value is not None:
                 col = f"{key}_channel_id"
                 if col not in ("music_channel_id", "collab_channel_id", "lounge_channel_id", "gallery_channel_id",
-                               "porch_channel_id", "porch18_channel_id", "mod_channel_id"):
+                               "porch_channel_id", "porch18_channel_id", "mod_channel_id",
+                               "showcase_channel_id"):
                     raise ValueError(key)
                 self._exec(f"UPDATE guild_config SET {col}=? WHERE guild_id=?", (value or None, guild_id))
         return self.get_config(guild_id)
@@ -539,14 +551,21 @@ class Storage:
     # ------------------------------------------------------------------ collab
     def add_collab(self, card_id: int, guild_id: int, channel_id: int, post_id: int, song_idx: int,
                    creator_id: int, song_id: Optional[str], types: list[str],
-                   note: Optional[str], season: Optional[str]) -> None:
+                   note: Optional[str], season: Optional[str], title: Optional[str] = None,
+                   thread_id: Optional[int] = None) -> None:
         self._exec(
             """INSERT INTO collab_requests
-               (card_id, guild_id, channel_id, post_id, song_idx, creator_id, song_id, types, note, season, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (card_id, guild_id, channel_id, post_id, song_idx, creator_id, song_id, types, note, season,
+                created_at, title, thread_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (card_id, guild_id, channel_id, post_id, song_idx, creator_id, song_id,
-             json.dumps(types), note, season, time.time()),
+             json.dumps(types), note, season, time.time(), title, thread_id),
         )
+
+    def recent_collabs(self, guild_id: int, since: float, limit: int = 25) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM collab_requests WHERE guild_id=? AND created_at>=? ORDER BY created_at DESC LIMIT ?",
+            (guild_id, since, limit)).fetchall()
 
     def get_collab_for(self, post_id: int, song_idx: int) -> Optional[sqlite3.Row]:
         return self.conn.execute(
@@ -608,6 +627,17 @@ class Storage:
              json.dumps(member_ids), others, note, time.time()),
         )
 
+    def set_gallery_mirror(self, card_id: int, mirror_id: int, mirror_channel_id: int) -> None:
+        self._exec("UPDATE gallery_entries SET mirror_id=?, mirror_channel_id=? WHERE card_id=?",
+                   (mirror_id, mirror_channel_id, card_id))
+
+    def gallery_entry(self, card_id: int) -> Optional[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM gallery_entries WHERE card_id=?", (card_id,)).fetchone()
+
+    def gallery_entry_for_post(self, post_id: int) -> Optional[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM gallery_entries WHERE post_id=? ORDER BY created_at DESC",
+                                 (post_id,)).fetchone()
+
     # ------------------------------------------------------------- reactions
     def get_milestone(self, message_id: int) -> int:
         row = self.conn.execute("SELECT last_milestone FROM reaction_milestones WHERE message_id=?",
@@ -630,9 +660,9 @@ class Storage:
             """SELECT s.poster_id AS uid FROM theme_posts t JOIN shares s ON s.post_id = t.post_id
                WHERE t.message_id=?
                UNION ALL SELECT creator_id FROM collab_requests WHERE card_id=?
-               UNION ALL SELECT creator_id FROM gallery_entries WHERE card_id=?
+               UNION ALL SELECT creator_id FROM gallery_entries WHERE card_id=? OR mirror_id=?
                UNION ALL SELECT poster_id FROM porch_posts WHERE message_id=? AND poster_id IS NOT NULL""",
-            (message_id, message_id, message_id, message_id),
+            (message_id, message_id, message_id, message_id, message_id),
         ).fetchone()
         return row["uid"] if row else None
 

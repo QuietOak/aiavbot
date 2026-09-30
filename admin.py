@@ -209,6 +209,7 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
         porch="SFW character porch: character shares + the Stoop arrival feed",
         porch_18="18+ character porch. Must be an age-restricted channel",
         mod_alerts="Private mod channel for 🚩 character reports and Stoop heads-ups",
+        showcase="Multimedia gallery: every presented collab is copied here too",
     )
     async def setup_cmd(self, interaction: discord.Interaction,
                         music: Optional[discord.TextChannel] = None,
@@ -217,7 +218,8 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
                         gallery: Optional[discord.TextChannel] = None,
                         porch: Optional[discord.TextChannel] = None,
                         porch_18: Optional[discord.TextChannel] = None,
-                        mod_alerts: Optional[discord.TextChannel] = None) -> None:
+                        mod_alerts: Optional[discord.TextChannel] = None,
+                        showcase: Optional[discord.TextChannel] = None) -> None:
         problems = []
         if porch_18 is not None and not porch_18.is_nsfw():
             problems.append(f"⛔ {porch_18.mention} isn't age-restricted, so it can't be the 18+ porch. "
@@ -231,14 +233,14 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
             music=music.id if music else None, collab=collab.id if collab else None,
             lounge=lounge.id if lounge else None, gallery=gallery.id if gallery else None,
             porch=porch.id if porch else None, porch18=porch_18.id if porch_18 else None,
-            mod=mod_alerts.id if mod_alerts else None,
+            mod=mod_alerts.id if mod_alerts else None, showcase=showcase.id if showcase else None,
         )
         lines = problems + [
             "**AIAVBOT channels**",
             f"🎵 Music: {fmt_channel(cfg.music_channel_id)}",
             f"🤝 Collab requests: {fmt_channel(cfg.collab_channel_id)}",
             f"💬 Lounge: {fmt_channel(cfg.lounge_channel_id)}",
-            f"🖼️ Gallery: {fmt_channel(cfg.gallery_channel_id)}",
+            f"🖼️ Gallery: {fmt_channel(cfg.gallery_channel_id)} → mirrored to {fmt_channel(cfg.showcase_channel_id)}",
             f"🎭 Porch: {fmt_channel(cfg.porch_channel_id)} · 🔞 18+ porch: {fmt_channel(cfg.porch18_channel_id)}",
             f"🛡️ Mod alerts: {fmt_channel(cfg.mod_channel_id)}",
         ]
@@ -250,7 +252,7 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
         for label, cid in (("Music", cfg.music_channel_id), ("Collab requests", cfg.collab_channel_id),
                            ("Gallery", cfg.gallery_channel_id), ("Lounge", cfg.lounge_channel_id),
                            ("Porch", cfg.porch_channel_id), ("18+ porch", cfg.porch18_channel_id),
-                           ("Mod alerts", cfg.mod_channel_id)):
+                           ("Mod alerts", cfg.mod_channel_id), ("Multimedia gallery", cfg.showcase_channel_id)):
             ch = guild.get_channel(cid) if cid else None
             if ch is None:
                 continue
@@ -337,6 +339,44 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
             f"🎭 Stoop arrival feed: **{feed}**{porch_hint} · 18+ feed: **{feed18}** · update notes: **{notes}**\n"
             f"🚩 Reports also go to The Stoop's moderators: **{sreports}**")
 
+    @app_commands.command(name="gallery_report", description="Who was involved in AIAV gallery publications in a month")
+    @app_commands.describe(month="Which month, as YYYY-MM (default: last month)",
+                           public="Post the list in this channel instead of only showing it to you")
+    async def gallery_report_cmd(self, interaction: discord.Interaction, month: Optional[str] = None,
+                                 public: bool = False) -> None:
+        import gallery_report as G
+        cfg = self.db.get_config(interaction.guild_id)
+        channel = interaction.guild.get_channel(cfg.gallery_channel_id) if cfg and cfg.gallery_channel_id else None
+        if channel is None:
+            return await reply(interaction, "Set the gallery first with `/aiav setup gallery:`.")
+        try:
+            start, end, label = G.month_bounds(month)
+        except (ValueError, TypeError):
+            return await reply(interaction, "Please give the month as YYYY-MM, e.g. 2026-09.")
+        try:
+            pubs, counts, names = await G.count_gallery(self.db, interaction.guild, channel, start, end,
+                                                        self.bot.user.id if self.bot.user else None)
+        except discord.HTTPException as e:
+            log.warning("Gallery report failed: %s", e)
+            return await reply(interaction, f"I couldn't read {channel.mention}. Check I have Read Message History there.")
+        if not pubs:
+            return await reply(interaction, T.REPORT_EMPTY.format(channel=channel.mention, month=label))
+        lines = G.format_report(label, pubs, counts, names, T)
+        chunks, chunk = [], ""
+        for line in lines:
+            if len(chunk) + len(line) + 1 > 1900:
+                chunks.append(chunk)
+                chunk = ""
+            chunk += line + "\n"
+        chunks.append(chunk)
+        for c in chunks:
+            if public and interaction.channel is not None:
+                await interaction.channel.send(c, allowed_mentions=discord.AllowedMentions.none())
+            else:
+                await interaction.followup.send(c, ephemeral=True)
+        if public:
+            await reply(interaction, "Posted. ✅")
+
     @app_commands.command(name="update", description="Post an AIAV Club activity update in the lounge now")
     async def update_cmd(self, interaction: discord.Interaction) -> None:
         nightly_cog = self.bot.get_cog("Nightly")
@@ -360,7 +400,7 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
             "**AIAVBOT status**" + (f"  ·  🧩 `{label}`" if label else ""),
             f"🎵 Music: {fmt_channel(cfg.music_channel_id)}",
             f"🤝 Collab requests: {fmt_channel(cfg.collab_channel_id)}",
-            f"🖼️ Gallery: {fmt_channel(cfg.gallery_channel_id)}",
+            f"🖼️ Gallery: {fmt_channel(cfg.gallery_channel_id)} → mirrored to {fmt_channel(cfg.showcase_channel_id)}",
             f"💬 Lounge: {fmt_channel(cfg.lounge_channel_id)} · nightly update "
             + ("on" if cfg.nightly_update else "off"),
             f"⏱️ Unused prompts tidied after {cfg.reply_timeout_min} min",

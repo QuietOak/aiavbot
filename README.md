@@ -86,7 +86,7 @@ commands, their role probably lacks Manage Messages. Fix it in Server Settings �
 Then, in the test server:
 
 ```
-/aiav setup music:#your-music-channel collab:#your-collab-channel gallery:#your-gallery lounge:#your-lounge
+/aiav setup music:#your-music-channel collab:#your-collab-channel gallery:#your-gallery lounge:#your-lounge showcase:#multimedia-gallery
 /aiav status
 ```
 
@@ -110,6 +110,8 @@ Optional:
 /aiav theme list
 /aiav theme end name:Spooky Season
 /aiav settings reply_timeout:15
+/aiav gallery_report                  (who was involved in last month's gallery publications)
+/aiav gallery_report month:2026-09 public:True
 ```
 
 **Themes:** while a theme is active, members see a **🎃 Share to Spooky Season** button on their song panel.
@@ -126,8 +128,8 @@ If a forum requires tags, the bot can't post there. Turn that off or use a threa
 | Channel | When someone posts... | The bot... |
 |---|---|---|
 | Music | a music link: Suno, YouTube, Spotify, SoundCloud, Bandcamp, Apple Music, Udio, Tidal, Deezer, Audiomack | thanks them with **🚀 Enhance Sharing** (poster only: label it, start a conversation, collab request, join a theme) and **❤️ Like on Suno/YouTube/…** buttons anyone can use. Suno links show style and lyrics. Other sites show the title, artist/channel and cover when available. After the timeout, or "Just sharing", the reply shrinks to one line but keeps its buttons. |
-| Collab requests | anything new: an idea, image, Suno or other link | asks **🤝 Starting a collab?** Yes opens the collab form. The prompt becomes the request card with **🙋 I'm interested** and its own thread. **No** removes the prompt and privately, politely reminds them the channel is for collab requests, and that a thread or the lounge suits other posts. **Characters** (a Stoop/Chub/JanitorAI/... link or a PNG/JSON character card file) get *"🎭 Looks like a character!"* and character collab types: theme song, new art, animation, voice, story, roleplay, worldbuilding. |
-| Gallery | anything new | asks **✨ Is this a collab result?** Yes asks who they worked with (server members and/or anyone else by name), then posts a congratulations card with a comment thread. **No** removes the prompt and privately, politely reminds them the gallery is for collab results, and that a thread, the lounge or the music channel suits other work. |
+| Collab requests | anything new: an idea, image, Suno or other link | asks **What's this post?** with four options. **🤝 A new collab request** opens the collab form (with an optional thread title); the prompt becomes the request card with **🙋 I'm interested** and its own thread. **💬 I'm responding to a collab** shows a private list of recent requests; the bot posts their message and files in that collab's thread and pings its creator. **🎉 It's a finished collab** opens the gallery form and presents it in the gallery channel (files included). **None of these** removes the prompt and privately, politely reminds them the channel is for collab requests, and that comments belong in the collab's thread or the lounge. **Characters** (a Stoop/Chub/JanitorAI/... link or a PNG/JSON character card file) get *"🎭 Looks like a character!"* and character collab types: theme song, new art, animation, voice, story, roleplay, worldbuilding. |
+| Gallery | anything new | asks **✨ Is this a collab result?** Yes asks who they worked with (server members and/or anyone else by name), then posts a congratulations card with a comment thread. Every presented collab is also **copied to the multimedia gallery** (`showcase:`), files included, with a link back to the comments. **No** removes the prompt and privately, politely reminds them the gallery is for collab results, and that a thread, the lounge or the music channel suits other work. |
 | Porch (SFW) | a character: a Stoop / Chub / JanitorAI / ... link, or a PNG/JSON character card file | replies with a character card: art, summary, creator, tags and **🧵 Start a thread** (a conversation thread for the character), **💜 I'm interested in this card** (a count, plus an optional comment in the thread), **🤝 Start a collab** (the character collab form; the request goes to collab requests) and **🚩 Report** (private note to the mods; for Stoop characters also to The Stoop's moderators, without the reporter's name). With the Stoop key, the **arrival feed** also posts new SFW Stoop characters here. An 18+ character shared here shows only its name, a link and "🔞 18+ character". |
 | 18+ porch (age-restricted) | the same | the same, with 18+ characters shown in full. The 18+ arrival feed posts new 18+ Stoop characters here. Anything copied out of this channel (e.g. a collab request) shows only the name, a link and 🔞. |
 | Lounge | (nothing) | posts the **🌙 nightly update** at midnight with activity for the last day, 7 days and 30 days |
@@ -137,7 +139,14 @@ In the collab and gallery channels the bot ignores replies, messages inside thre
 like "cool!" (under 15 characters with no link or image). Only the poster can use their prompt's buttons,
 and unused prompts disappear after the reply timeout.
 
-Every collab request, whether from the music panel or the collab channel, gets its own thread.
+Every collab request, whether from the music panel or the collab channel, gets its own thread. Members can name
+threads themselves: the collab form, the music **Start a conversation** form and the porch **Start a thread** button
+all have an optional thread title (prefilled with a sensible default).
+
+**Gallery report:** `/aiav gallery_report` reads the gallery channel for last month (or `month:YYYY-MM`) and lists
+everyone involved in a publication, most first, e.g. `Pac: 19 · Oak: 5 · Joe: 2`. A presented collab counts once for
+the presenter, each collaborator they picked and each name typed under "Anyone else?". Any other post with an image,
+file or link counts for its poster. Replies and chat don't count. Private by default; `public:True` posts it.
 **I'm interested** pings the person into that thread with the creator.
 
 **Reaction milestones:** each milestone is announced once per post. Reactions on the bot's theme copies,
@@ -193,6 +202,7 @@ All member-facing text, collab types and response types are in **`texts.py`**. E
 | `admin.py` | `/aiav` admin commands |
 | `nightly.py` | The midnight lounge update |
 | `reactions.py` | Reaction counting and milestone shout-outs |
+| `gallery_report.py` | The monthly "who was involved" count for `/aiav gallery_report` |
 | `porch.py` | The character porch: character cards, thread / interested / collab / report (incl. to The Stoop's moderators), the Stoop arrival feed and card syncing |
 | `stoop_api.py` | Read-only client for The Stoop partner API (paging, rate limits, images) |
 | `storage.py` | SQLite database |

@@ -106,6 +106,9 @@ COLLAB_TYPES_DESCRIPTION = "Pick as many as you like."
 COLLAB_NOTE_LABEL = "Anything else? (optional)"
 COLLAB_NOTE_PLACEHOLDER = "e.g. dark fantasy vibe, would love an animated loop for the chorus"
 COLLAB_NOTE_MAX = 500
+THREAD_TITLE_LABEL = "Thread title (optional)"
+THREAD_TITLE_DESCRIPTION = "Name the conversation so it's easy to find."
+THREAD_TITLE_MAX = 90
 
 # (value, label, emoji, short description)
 COLLAB_TYPES = [
@@ -175,6 +178,7 @@ RESPONSE_TYPES = [
 THREAD_NOTE_LABEL = "Opening note (optional)"
 THREAD_NOTE_PLACEHOLDER = "Anything you'd like listeners to know"
 THREAD_NOTE_MAX = 1000
+PORCH_THREAD_MODAL_TITLE = "Start a thread"
 
 THREAD_NAME = "🎵 {title}"
 THREAD_FALLBACK_TITLE = "{name}'s song"
@@ -196,19 +200,39 @@ GENERIC_ERROR = "Something went wrong on my end. Please try again in a moment."
 
 # ================================================================ collab channel
 # When someone posts directly in the collab requests channel (not in a thread).
-COLLAB_PROMPT = "🤝 Starting a collab, **{name}**?"
-COLLAB_PROMPT_YES = "Yes, post a collab request"
-COLLAB_PROMPT_NO = "No, not a request"
+COLLAB_PROMPT = "🤝 Hi **{name}**! What's this post?"
+COLLAB_PROMPT_YES = "🤝 A new collab request"
+COLLAB_PROMPT_RESP = "💬 I'm responding to a collab"
+COLLAB_PROMPT_DONE = "🎉 It's a finished collab"
+COLLAB_PROMPT_NO = "None of these"
 COLLAB_NOT_YOURS = "Only the person who posted this can turn it into a collab request."
 COLLAB_POSTED_HERE = "Your collab request is up, with its own thread: {url} 🤝"
 # Private, friendly reminder when someone answers "No" in the collab channel.
 # When the post in the collab channel is a character (Stoop/Chub/... link or a PNG/JSON card file)
-COLLAB_PROMPT_CHARACTER = "🎭 Looks like a character, **{name}**! Want to find collaborators for them?"
-COLLAB_PROMPT_CHARACTER_YES = "Yes, find collaborators"
-COLLAB_REMINDER = ("Thanks for posting, {name}! 💛 Just a friendly heads-up: {channel} is kept for collab "
-                   "requests so they're easy to browse. For chatting and other shares, a thread here or "
-                   "{lounge} is the perfect spot.")
+COLLAB_PROMPT_CHARACTER = "🎭 Looks like a character, **{name}**! What's this post?"
+COLLAB_PROMPT_CHARACTER_YES = "🤝 Find collaborators for them"
+COLLAB_REMINDER = ("Thanks for posting, {name}! 💛 Just a friendly heads-up: {channel} is for making collab "
+                   "requests, so they're easy to browse. Comments are best in the collab's own thread, "
+                   "or in {lounge}.")
 LOUNGE_FALLBACK = "the AIAV Club lounge"
+
+# "💬 I'm responding to a collab": pick the collab, the bot posts their message in its thread.
+RESPOND_PICK = "Which collab are you responding to? I'll post your message in its thread and let the creator know."
+RESPOND_PLACEHOLDER = "Pick the collab request"
+RESPOND_NONE = ("There aren't any collab requests to respond to yet. If you're looking for collaborators, "
+                "pick **🤝 A new collab request** instead!")
+RESPOND_OPTION_DESC = "by {creator} · {when}"
+RESPOND_POST = "💬 {responder} responded to {creator}'s collab request:"
+RESPOND_ORIGINAL = "📌 Original post: {url}"
+RESPOND_DONE = ("Posted in the collab's thread: {url} 💬\nYour original message is still here. You can delete it "
+                "if you like, since the thread has a copy.")
+RESPOND_THREAD_GONE = "I couldn't find that collab's thread any more. Try another one, or reply on the request directly."
+RESPOND_FILES_SKIPPED = "*(Some attachments were too large to copy. See the original post.)*"
+
+# "🎉 It's a finished collab": the gallery form; the card is posted in the gallery channel.
+FINISHED_NO_GALLERY = "The gallery channel isn't set up yet. Please let a moderator know!"
+FINISHED_POSTED = ("Presented in the gallery: {url} 🎉\nYour original message is still here. You can delete it "
+                   "if you like, since the gallery has a copy.")
 
 # ======================================================================= gallery
 # When someone posts in the gallery channel (not in a thread).
@@ -244,6 +268,14 @@ GALLERY_THREAD_NAME = "💬 {title}"
 GALLERY_THREAD_INTRO = ("🎉 Congratulations {people} on **{title}**!\n"
                         "Leave your comments, kudos and questions for the creators here. 💬")
 GALLERY_POSTED = "Your collab is presented, with a comment thread: {url} 🎉"
+# Every presented collab is mirrored to the multimedia gallery (if set with /aiav setup showcase:).
+MIRROR_HEADER = "🎉 **New AIAV Club collab!** {credits}"
+MIRROR_BUTTON = "💬 Comments & original"
+
+# /aiav gallery_report
+REPORT_TITLE = "📚 **AIAV gallery, {month}**: {entries} publication{s} · {people} people involved"
+REPORT_LINE = "{name}: {count}"
+REPORT_EMPTY = "Nothing was published in {channel} in {month}."
 
 # ================================================================ nightly update
 # Posted in the lounge at midnight (local time of the PC running the bot).
@@ -258,6 +290,7 @@ STAT_LABELS = [
     ("line", "lines"),
     ("thread", "threads"),
     ("collab", "collab requests"),
+    ("collab_response", "collab replies"),
     ("interested", "'interested'"),
     ("theme", "theme shares"),
     ("gallery_collab", "gallery collabs"),
