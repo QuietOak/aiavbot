@@ -220,6 +220,40 @@ CREATE TABLE IF NOT EXISTS porch_reports (
     created_at  REAL NOT NULL
 );
 
+-- Stoop characters (or whole creators) mods have chosen never to post automatically.
+CREATE TABLE IF NOT EXISTS stoop_skips (
+    guild_id    INTEGER NOT NULL,
+    kind        TEXT NOT NULL,                   -- card | creator
+    target_id   TEXT NOT NULL,                   -- Stoop card id or creator id
+    label       TEXT,                            -- name shown in /aiav stoop skipped
+    reason      TEXT,
+    by_user     INTEGER,
+    created_at  REAL NOT NULL,
+    PRIMARY KEY (guild_id, kind, target_id)
+);
+
+-- Library backfill: posting Stoop characters that existed before the feed, a few per hour.
+CREATE TABLE IF NOT EXISTS stoop_backfill (
+    guild_id     INTEGER NOT NULL,
+    channel_id   INTEGER NOT NULL,
+    nsfw         INTEGER NOT NULL,
+    per_hour     INTEGER NOT NULL,
+    status       TEXT NOT NULL,                  -- running | paused | done
+    total        INTEGER NOT NULL,
+    posted       INTEGER NOT NULL DEFAULT 0,
+    started_by   INTEGER,
+    started_at   REAL NOT NULL,
+    last_post_at REAL,
+    PRIMARY KEY (guild_id, channel_id)
+);
+CREATE TABLE IF NOT EXISTS stoop_backfill_queue (
+    guild_id    INTEGER NOT NULL,
+    channel_id  INTEGER NOT NULL,
+    card_id     TEXT NOT NULL,
+    created_at  TEXT,                            -- Stoop createdAt: oldest goes first
+    PRIMARY KEY (guild_id, channel_id, card_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_porch_stoop ON porch_posts (stoop_id);
 CREATE INDEX IF NOT EXISTS idx_refs_stoop ON stoop_refs (stoop_id);
 CREATE INDEX IF NOT EXISTS idx_shares_status ON shares (status, created_at);
@@ -905,4 +939,97 @@ class Storage:
             d = dict(r)
             d["data"] = json.loads(d["data"]) if d["data"] else None
             out.append(d)
+        return out
+
+    # ------------------------------------------------------------ stoop skips
+    def add_skip(self, guild_id: int, kind: str, target_id: str, label: Optional[str], reason: Optional[str],
+                 by_user: Optional[int]) -> None:
+        self._exec("""INSERT OR REPLACE INTO stoop_skips (guild_id, kind, target_id, label, reason, by_user, created_at)
+                      VALUES (?, ?, ?, ?, ?, ?, ?)""", (guild_id, kind, target_id, label, reason, by_user, time.time()))
+
+    def remove_skip(self, guild_id: int, kind: str, target_id: str) -> bool:
+        return self._exec("DELETE FROM stoop_skips WHERE guild_id=? AND kind=? AND target_id=?",
+                          (guild_id, kind, target_id)).rowcount > 0
+
+    def skips(self, guild_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM stoop_skips WHERE guild_id=? ORDER BY created_at DESC",
+                                 (guild_id,)).fetchall()
+
+    def is_skipped(self, guild_id: int, card_id: Optional[str], creator_id: Optional[str]) -> bool:
+        return self.conn.execute(
+            """SELECT 1 FROM stoop_skips WHERE guild_id=? AND
+               ((kind='card' AND target_id=?) OR (kind='creator' AND target_id=?)) LIMIT 1""",
+            (guild_id, card_id or "", creator_id or "")).fetchone() is not None
+
+    def stoop_ids_posted_in(self, channel_id: int) -> set[str]:
+        return {r["stoop_id"] for r in self.conn.execute(
+            "SELECT DISTINCT stoop_id FROM porch_posts WHERE channel_id=? AND stoop_id IS NOT NULL", (channel_id,))}
+
+    # ------------------------------------------------------------ backfill
+    def start_backfill(self, guild_id: int, channel_id: int, nsfw: bool, per_hour: int, cards: list[tuple[str, str]],
+                       by_user: Optional[int]) -> None:
+        """cards: [(card_id, createdAt)]. Replaces any earlier queue for this channel."""
+        self.conn.execute("DELETE FROM stoop_backfill_queue WHERE guild_id=? AND channel_id=?", (guild_id, channel_id))
+        self.conn.executemany(
+            "INSERT OR IGNORE INTO stoop_backfill_queue (guild_id, channel_id, card_id, created_at) VALUES (?, ?, ?, ?)",
+            [(guild_id, channel_id, cid, created) for cid, created in cards])
+        self.conn.execute(
+            """INSERT OR REPLACE INTO stoop_backfill (guild_id, channel_id, nsfw, per_hour, status, total, posted,
+                                                      started_by, started_at, last_post_at)
+               VALUES (?, ?, ?, ?, 'running', ?, 0, ?, ?, NULL)""",
+            (guild_id, channel_id, int(nsfw), per_hour, len(cards), by_user, time.time()))
+        self.conn.commit()
+
+    def backfill(self, guild_id: int, channel_id: int) -> Optional[dict]:
+        row = self.conn.execute("SELECT * FROM stoop_backfill WHERE guild_id=? AND channel_id=?",
+                                (guild_id, channel_id)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["left"] = self.conn.execute("SELECT COUNT(*) n FROM stoop_backfill_queue WHERE guild_id=? AND channel_id=?",
+                                      (guild_id, channel_id)).fetchone()["n"]
+        return d
+
+    def backfills(self, status: Optional[str] = None) -> list[dict]:
+        sql, params = "SELECT guild_id, channel_id FROM stoop_backfill", ()
+        if status:
+            sql, params = sql + " WHERE status=?", (status,)
+        return [self.backfill(r["guild_id"], r["channel_id"]) for r in self.conn.execute(sql, params)]
+
+    def set_backfill(self, guild_id: int, channel_id: int, **fields) -> None:
+        allowed = {"status", "posted", "last_post_at", "per_hour"}
+        for k in fields:
+            if k not in allowed:
+                raise ValueError(k)
+        sets = ", ".join(f"{k}=?" for k in fields)
+        self._exec(f"UPDATE stoop_backfill SET {sets} WHERE guild_id=? AND channel_id=?",
+                   (*fields.values(), guild_id, channel_id))
+
+    def next_backfill_card(self, guild_id: int, channel_id: int) -> Optional[str]:
+        row = self.conn.execute(
+            """SELECT card_id FROM stoop_backfill_queue WHERE guild_id=? AND channel_id=?
+               ORDER BY created_at, card_id LIMIT 1""", (guild_id, channel_id)).fetchone()
+        return row["card_id"] if row else None
+
+    def drop_backfill_card(self, guild_id: int, channel_id: int, card_id: str) -> None:
+        self._exec("DELETE FROM stoop_backfill_queue WHERE guild_id=? AND channel_id=? AND card_id=?",
+                   (guild_id, channel_id, card_id))
+
+    def auto_posts_for(self, guild_id: int, stoop_id: str) -> list[dict]:
+        """The bot's own feed/library cards for a Stoop character (not members' shares)."""
+        return [self._porch(r) for r in self.conn.execute(
+            "SELECT * FROM porch_posts WHERE guild_id=? AND stoop_id=? AND kind IN ('arrival', 'library')",
+            (guild_id, stoop_id))]
+
+    def auto_posts_by_creator(self, guild_id: int, creator_id: str) -> list[dict]:
+        out = []
+        for r in self.conn.execute(
+                """SELECT p.*, c.data AS card_data FROM porch_posts p JOIN stoop_cards c ON c.card_id = p.stoop_id
+                   WHERE p.guild_id=? AND p.kind IN ('arrival', 'library') AND c.data IS NOT NULL""", (guild_id,)):
+            data = json.loads(r["card_data"])
+            if isinstance(data.get("creator"), dict) and data["creator"].get("id") == creator_id:
+                d = dict(r)
+                d.pop("card_data", None)
+                d["info"] = json.loads(d["info"]) if d["info"] else None
+                out.append(d)
         return out

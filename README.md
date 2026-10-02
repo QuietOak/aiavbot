@@ -178,6 +178,21 @@ feed, the art or the syncing. `/aiav status` shows whether the key works, never 
 **Rating safety:** the key can see 18+ characters, so the bot checks every card's rating itself. 18+ art and text
 appear only in the age-restricted porch. The SFW feed asks The Stoop for SFW characters only, and checks again.
 
+**The Stoop library (mods):** the feeds only post characters created after they're switched on. To bring in the
+rest of The Stoop's catalog:
+
+```
+/aiav stoop check                                   how many Stoop characters aren't in the porch channels yet
+/aiav stoop backfill channel:SFW porch per_hour:20  post them slowly, oldest first ("📚 From The Stoop's library")
+/aiav stoop backfill_stop channel:SFW porch         pause (run backfill again to continue)
+/aiav stoop skip card:<link>  or  creator:<profile link>   never auto-post it (removes cards already posted)
+/aiav stoop unskip …  ·  /aiav stoop skipped
+```
+
+New arrivals keep posting while a backfill runs, the backfill survives restarts, and mods are told when it finishes.
+🚩 reports in the mod channel also get a **🙈 Remove & skip** button. Skipping only stops *automatic* posting;
+members can still share a skipped character themselves.
+
 Details: `AIAVBOT_Stoop_Integration_Plan.md`. Code: `stoop_api.py` (API client) and `porch.py` (the porch).
 
 ## 5. Try it

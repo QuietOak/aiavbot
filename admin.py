@@ -122,6 +122,7 @@ def admins_only():
 class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT settings (mods and admins)"):
     theme = app_commands.Group(name="theme", description="Themes members can share matching songs to")
     modrole = app_commands.Group(name="modrole", description="Roles that may use /aiav (admins only)")
+    stoop = app_commands.Group(name="stoop", description="The Stoop library: backlog, backfill and skipped characters")
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -455,6 +456,10 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
         if cards and isinstance(cards.get("total"), int):
             nsfw = cards.get("nsfw") if isinstance(cards.get("nsfw"), int) else 0
             text += f" · {cards['total']:,} characters ({cards['total'] - nsfw:,} SFW, {nsfw:,} 18+)"
+        for cid in (cfg.porch_channel_id, cfg.porch18_channel_id):
+            line = self._backfill_line(self.db.backfill(cfg.guild_id, cid)) if cid else ""
+            if line:
+                text += f"\n<#{cid}>" + line
         counts = self.db.porch_counts()
         text += (f"\n    tracking {counts['live']} live · {counts['missing']} unavailable · {counts['gone']} gone"
                  f" · {client.requests_last_hour()} API calls in the last hour")
@@ -476,6 +481,171 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
         if song.source == "clip_api":
             return "✅ working (full song info)"
         return "⚠️ basic info only: Suno's data feed may have changed"
+
+    # ------------------------------------------------------------------ the Stoop library
+    def _porch_ready(self, interaction: discord.Interaction):
+        porch = self.bot.get_cog("Porch")
+        if porch is None:
+            return None, "The porch module isn't loaded."
+        if not porch.client.enabled:
+            return None, "The Stoop API isn't configured (add STOOP_API_KEY to the env file)."
+        return porch, ""
+
+    def _backfill_line(self, job: Optional[dict]) -> str:
+        if not job:
+            return ""
+        if job["status"] == "done":
+            return f"    📚 backfill done: {job['posted']} posted"
+        hours = job["left"] / max(1, job["per_hour"])
+        eta = f"about {hours:.0f} h left" if hours >= 1 else "under an hour left"
+        state = "running" if job["status"] == "running" else "paused"
+        return (f"    📚 backfill {state}: {job['posted']} posted · {job['left']} to go · "
+                f"{job['per_hour']}/hour · {eta}")
+
+    @stoop.command(name="check", description="How many Stoop characters aren't in the porch channels yet")
+    async def stoop_check(self, interaction: discord.Interaction) -> None:
+        porch, err = self._porch_ready(interaction)
+        if not porch:
+            return await reply(interaction, err)
+        try:
+            info = await porch.backlog(interaction.guild_id)
+        except Exception as e:
+            log.warning("Stoop check failed: %r", e)
+            return await reply(interaction, "Couldn't read The Stoop's list right now. Try again in a minute.")
+        if not info:
+            return await reply(interaction, "Set up the porch channels first: `/aiav setup porch: porch_18:`.")
+        lines = ["🏡 **The Stoop library**"]
+        for rating, label in (("sfw", "SFW"), ("nsfw", "18+")):
+            if rating not in info:
+                continue
+            i = info[rating]
+            lines.append(f"**{label}** → <#{i['channel_id']}>: {i['total']:,} on The Stoop · {i['posted']:,} posted · "
+                         f"**{len(i['missing']):,} not posted** · {i['skipped']:,} skipped")
+            line = self._backfill_line(self.db.backfill(interaction.guild_id, i["channel_id"]))
+            if line:
+                lines.append(line)
+        lines.append("Post the missing ones with `/aiav stoop backfill`.")
+        await reply(interaction, "\n".join(lines))
+
+    @stoop.command(name="backfill", description="Post Stoop characters that aren't in a porch channel yet, oldest first")
+    @app_commands.describe(channel="Which porch", per_hour="How many per hour (default 20)",
+                           limit="Only this many (the oldest first). Default: all of them")
+    @app_commands.choices(channel=[app_commands.Choice(name="SFW porch", value="sfw"),
+                                   app_commands.Choice(name="18+ porch", value="nsfw")])
+    async def stoop_backfill(self, interaction: discord.Interaction, channel: app_commands.Choice[str],
+                             per_hour: app_commands.Range[int, 1, 60] = 20,
+                             limit: Optional[app_commands.Range[int, 1, 10000]] = None) -> None:
+        porch, err = self._porch_ready(interaction)
+        if not porch:
+            return await reply(interaction, err)
+        cfg = self.db.get_config(interaction.guild_id)
+        cid = (cfg.porch_channel_id if channel.value == "sfw" else cfg.porch18_channel_id) if cfg else None
+        current = self.db.backfill(interaction.guild_id, cid) if cid else None
+        if current and current["status"] == "running":
+            return await reply(interaction, "A backfill is already running there:\n" + self._backfill_line(current)
+                               + "\nStop it with `/aiav stoop backfill_stop` first to restart it.")
+        try:
+            job, problem = await porch.start_backfill(interaction.guild_id, channel.value, per_hour, limit,
+                                                      interaction.user.id)
+        except Exception as e:
+            log.warning("Backfill start failed: %r", e)
+            return await reply(interaction, "Couldn't read The Stoop's list right now. Try again in a minute.")
+        if problem == "not_set":
+            return await reply(interaction, f"Set the {channel.name} first with `/aiav setup`.")
+        if problem == "not_age_restricted":
+            return await reply(interaction, "The 18+ porch must be an age-restricted channel first.")
+        if not job["total"]:
+            return await reply(interaction, f"Nothing to do: every character is already in <#{job['channel_id']}> "
+                                            "(or skipped). ✅")
+        hours = job["total"] / per_hour
+        await reply(interaction,
+            f"📚 Backfill started in <#{job['channel_id']}>: **{job['total']:,} characters**, oldest first, "
+            f"{per_hour} an hour (about {hours:.0f} hours). Each is labelled \"From The Stoop's library\".\n"
+            "New arrivals still post as usual. Pause any time with `/aiav stoop backfill_stop`; "
+            "running `/aiav stoop backfill` again picks up from where it is.")
+
+    @stoop.command(name="backfill_stop", description="Pause the library backfill in a porch channel")
+    @app_commands.choices(channel=[app_commands.Choice(name="SFW porch", value="sfw"),
+                                   app_commands.Choice(name="18+ porch", value="nsfw")])
+    async def stoop_backfill_stop(self, interaction: discord.Interaction, channel: app_commands.Choice[str]) -> None:
+        cfg = self.db.get_config(interaction.guild_id)
+        cid = (cfg.porch_channel_id if channel.value == "sfw" else cfg.porch18_channel_id) if cfg else None
+        job = self.db.backfill(interaction.guild_id, cid) if cid else None
+        if not job or job["status"] != "running":
+            return await reply(interaction, "No backfill is running there.")
+        self.db.set_backfill(interaction.guild_id, cid, status="paused")
+        await reply(interaction, "⏸️ Paused.\n" + self._backfill_line(self.db.backfill(interaction.guild_id, cid)))
+
+    @stoop.command(name="skip", description="Never auto-post a Stoop character (or all of one creator's)")
+    @app_commands.describe(card="Stoop card link or id", creator="Stoop creator profile link or id",
+                           reason="Why (shown in /aiav stoop skipped)",
+                           remove_posted="Also remove the bot's cards already posted for it (default yes)")
+    async def stoop_skip(self, interaction: discord.Interaction, card: Optional[str] = None,
+                         creator: Optional[str] = None, reason: Optional[app_commands.Range[str, 1, 200]] = None,
+                         remove_posted: bool = True) -> None:
+        import stoop_api
+        porch = self.bot.get_cog("Porch")
+        if porch is None:
+            return await reply(interaction, "The porch module isn't loaded.")
+        if bool(card) == bool(creator):
+            return await reply(interaction, "Give either a `card:` or a `creator:` (one at a time).")
+        if card:
+            target = stoop_api.parse_card_ref(card)
+            if not target:
+                return await reply(interaction, "That doesn't look like a Stoop card link or id.")
+            data = await porch.fresh_card(target) if porch.client.enabled else None
+            rec = self.db.stoop_card(target)
+            label = (data or (rec or {}).get("data") or {}).get("name") or target
+            removed = await porch.skip(interaction.guild_id, "card", target, label, reason, interaction.user.id,
+                                       remove_posted)
+            what = f"**{discord.utils.escape_markdown(label)}**"
+        else:
+            target = stoop_api.parse_creator_ref(creator)
+            if not target:
+                return await reply(interaction, "That doesn't look like a Stoop creator link or id.")
+            label = self._creator_name(target) or target
+            removed = await porch.skip(interaction.guild_id, "creator", target, label, reason, interaction.user.id,
+                                       remove_posted)
+            what = f"all characters by **{discord.utils.escape_markdown(label)}**"
+        extra = f" Removed {removed} posted card{'s' if removed != 1 else ''}." if removed else ""
+        await reply(interaction, f"🙈 The bot won't auto-post {what} any more.{extra}\n"
+                                 "(Members can still share it themselves. Undo with `/aiav stoop unskip`.)")
+
+    def _creator_name(self, creator_id: str) -> Optional[str]:
+        import json as _json
+        for r in self.db.conn.execute("SELECT data FROM stoop_cards WHERE data IS NOT NULL"):
+            d = _json.loads(r["data"])
+            c = d.get("creator") if isinstance(d.get("creator"), dict) else {}
+            if c.get("id") == creator_id and c.get("displayName"):
+                return c["displayName"]
+        return None
+
+    @stoop.command(name="unskip", description="Allow a skipped Stoop character or creator again")
+    @app_commands.describe(card="Stoop card link or id", creator="Stoop creator profile link or id")
+    async def stoop_unskip(self, interaction: discord.Interaction, card: Optional[str] = None,
+                           creator: Optional[str] = None) -> None:
+        import stoop_api
+        if bool(card) == bool(creator):
+            return await reply(interaction, "Give either a `card:` or a `creator:` (one at a time).")
+        kind, target = ("card", stoop_api.parse_card_ref(card)) if card else ("creator", stoop_api.parse_creator_ref(creator))
+        if target and self.db.remove_skip(interaction.guild_id, kind, target):
+            return await reply(interaction, "✅ Un-skipped. It can be posted again (a backfill or a new update brings it in).")
+        await reply(interaction, "That wasn't on the skip list.")
+
+    @stoop.command(name="skipped", description="List the Stoop characters and creators the bot won't auto-post")
+    async def stoop_skipped(self, interaction: discord.Interaction) -> None:
+        rows = self.db.skips(interaction.guild_id)
+        if not rows:
+            return await reply(interaction, "Nothing is skipped.")
+        lines = ["🙈 **Skipped**"]
+        for r in rows[:40]:
+            who = "🎭" if r["kind"] == "card" else "👤 creator"
+            why = f": {r['reason']}" if r["reason"] else ""
+            by = f" · by <@{r['by_user']}>" if r["by_user"] else ""
+            lines.append(f"{who} **{discord.utils.escape_markdown(r['label'] or r['target_id'])}**{why}{by}")
+        if len(rows) > 40:
+            lines.append(f"…and {len(rows) - 40} more")
+        await reply(interaction, "\n".join(lines)[:1990])
 
     # ------------------------------------------------------------------ themes
     def _target_text(self, guild: discord.Guild, target_id: Optional[int]) -> str:
