@@ -241,6 +241,8 @@ def render_card(char: dict, *, state: str, kind: str, message_id: int, met: int,
 
     if kind == "arrival":
         content = T.PORCH_ARRIVAL.format(name=escape_markdown(name))
+    elif kind == "library":
+        content = T.PORCH_LIBRARY.format(name=escape_markdown(name))
     else:
         content = T.PORCH_SHARED.format(poster=escape_markdown(poster_name or "Someone"), name=escape_markdown(name))
     return content, embed, view
@@ -292,6 +294,30 @@ class PorchButton(ui.DynamicItem[ui.Button], template=r"porch:(?P<action>hi|met|
                 await porch.met(interaction, post)
         except Exception:
             log.exception("Porch button %s failed", self.action)
+            await tell(interaction, T.GENERIC_ERROR)
+
+
+class SkipButton(ui.DynamicItem[ui.Button], template=r"porch:skip:(?P<mid>\d+):(?P<stoop>[01])"):
+    """On a 🚩 report in the mod channel: remove the reported card (and never auto-post a Stoop character again)."""
+
+    def __init__(self, mid: int, stoop: bool = True):
+        super().__init__(ui.Button(label=T.SKIP_BUTTON if stoop else T.SKIP_BUTTON_LOCAL,
+                                   style=discord.ButtonStyle.danger, custom_id=f"porch:skip:{mid}:{int(stoop)}"))
+        self.mid = mid
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(int(match["mid"]), match["stoop"] == "1")
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        porch = get_porch(interaction)
+        if not porch.is_staff(interaction.user):
+            return await tell(interaction, T.SKIP_NOT_STAFF)
+        await ack(interaction)
+        try:
+            await porch.skip_from_report(interaction, interaction.message, self.mid)
+        except Exception:
+            log.exception("Remove & skip failed")
             await tell(interaction, T.GENERIC_ERROR)
 
 
@@ -384,18 +410,21 @@ class Porch(commands.Cog):
         self.images_dir = Path(self.db.path).parent / "stoop_images"
         self._stats_cache: tuple[float, Optional[dict]] = (0.0, None)
         self._poll_lock = asyncio.Lock()
+        self._catalog_cache: dict[str, tuple[float, list]] = {}
 
     async def cog_load(self) -> None:
         self.http = aiohttp.ClientSession(headers=suno_fetch.HEADERS, timeout=suno_fetch.TIMEOUT)
-        self.bot.add_dynamic_items(PorchButton)
+        self.bot.add_dynamic_items(PorchButton, SkipButton)
         self.feed_loop.change_interval(minutes=FEED_MINUTES)
         self.feed_loop.start()
         self.recheck_loop.start()
+        self.backfill_loop.start()
         log.info("Porch loaded (The Stoop API: %s)", "key set" if self.client.enabled else "no key")
 
     async def cog_unload(self) -> None:
         self.feed_loop.cancel()
         self.recheck_loop.cancel()
+        self.backfill_loop.cancel()
         await self.client.close()
         if self.http:
             await self.http.close()
@@ -751,7 +780,9 @@ class Porch(commands.Cog):
         lines.append(f"**Reported by:** {user.mention}")
         if stoop_line:
             lines.append(stoop_line)
-        sent = await self.alert_mods(post["guild_id"], "\n".join(lines))
+        view = ui.View(timeout=None)
+        view.add_item(SkipButton(mid, stoop=bool(post["stoop_id"])))
+        sent = await self.alert_mods(post["guild_id"], "\n".join(lines), view=view)
         if stoop_sent:
             await tell(interaction, T.PORCH_REPORT_DONE_STOOP)
         else:
@@ -797,14 +828,17 @@ class Porch(commands.Cog):
         log.info("Report sent to The Stoop's moderators (card %s, %s)", post["stoop_id"], category)
         return (T.PORCH_REPORT_STOOP_URGENT if category == "ILLEGAL" else T.PORCH_REPORT_STOOP_SENT), True
 
-    async def alert_mods(self, guild_id: int, text: str) -> bool:
+    async def alert_mods(self, guild_id: int, text: str, view: Optional[ui.View] = None) -> bool:
         cfg = self.db.get_config(guild_id)
         ch = self.bot.get_channel(cfg.mod_channel_id) if cfg and cfg.mod_channel_id else None
         if ch is None:
             log.info("Mod alert (no mod channel set): %s", text.splitlines()[0])
             return False
         try:
-            await ch.send(text, allowed_mentions=discord.AllowedMentions.none())
+            if view is not None:
+                await ch.send(text, view=view, allowed_mentions=discord.AllowedMentions.none())
+            else:
+                await ch.send(text, allowed_mentions=discord.AllowedMentions.none())
             return True
         except discord.HTTPException as e:
             log.warning("Couldn't send mod alert: %s", e)
@@ -849,7 +883,7 @@ class Porch(commands.Cog):
             char or {}, state=state, kind=post["kind"], message_id=post["message_id"],
             met=self.db.met_count(card_key(post), post["guild_id"]), stoop=stoop,
             poster_name=self._poster_name(channel, post), image_name=image_name,
-            porch18_id=cfg.porch18_channel_id if cfg else None, big_image=post["kind"] == "arrival",
+            porch18_id=cfg.porch18_channel_id if cfg else None, big_image=post["kind"] in ("arrival", "library"),
             has_thread=bool(post["thread_id"]))
         kwargs = {"content": content, "embed": embed, "view": view}
         if not stats_only:
@@ -1086,34 +1120,203 @@ class Porch(commands.Cog):
         channel = self.bot.get_channel(channel_id)
         if channel is None:
             return
-        for rec in self.db.stoop_pending_arrivals(channel_id, nsfw, since_iso, MAX_ARRIVALS_PER_POLL):
+        posted = 0
+        for rec in self.db.stoop_pending_arrivals(channel_id, nsfw, since_iso, MAX_ARRIVALS_PER_POLL * 10):
+            if posted >= MAX_ARRIVALS_PER_POLL:
+                break
             card = rec["data"]
-            if bool(card.get("nsfw")) != nsfw:
+            if bool(card.get("nsfw")) != nsfw or self.skipped(cfg.guild_id, card):
                 continue
-            adult_ok = nsfw          # 18+ arrivals only ever go to the age-restricted porch
-            char = stoop_api.to_character_info(card)
-            state = desired_state(char, adult_ok)
-            if state != "full":
+            msg = await self.post_feed_card(cfg, channel, card, "arrival")
+            if msg is False:
+                return                      # Discord refused: try again next poll
+            if msg is not None:
+                posted += 1
+
+    def skipped(self, guild_id: int, card: dict) -> bool:
+        creator = card.get("creator") if isinstance(card.get("creator"), dict) else {}
+        return self.db.is_skipped(guild_id, card.get("id"), creator.get("id"))
+
+    async def post_feed_card(self, cfg: GuildConfig, channel, card: dict, kind: str):
+        """Post an arrival or library card. Returns the message, None if it shouldn't be shown here,
+        or False if Discord refused (so the caller can stop and retry later)."""
+        nsfw = bool(card.get("nsfw"))
+        adult_ok = channel.id == cfg.porch18_channel_id and bool(getattr(channel, "is_nsfw", lambda: False)())
+        if nsfw and not adult_ok:
+            return None                     # 18+ cards are only ever auto-posted in the age-restricted porch
+        char = stoop_api.to_character_info(card)
+        state = desired_state(char, adult_ok)
+        f = await self.image_file(char.get("stoop_asset"))
+        content, embed, _ = render_card(char, state=state, kind=kind, message_id=0, met=0, stoop=card,
+                                        image_name=f.filename if f else None, porch18_id=cfg.porch18_channel_id)
+        try:
+            msg = await channel.send(content, embed=embed, files=[f] if f else [],
+                                     allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException as e:
+            log.warning("Couldn't post %s card: %s", kind, e)
+            return False
+        # Track it before anything else can fail, so it's never orphaned (or posted twice).
+        self.db.add_porch_post(msg.id, cfg.guild_id, channel.id, kind, adult_ok=adult_ok,
+                               stoop_id=card["id"], state=state, shown_version=card.get("version"),
+                               shown_asset=char.get("stoop_asset") if f else None)
+        self.db.log(cfg.guild_id, msg.id, None, "porch_arrival" if kind == "arrival" else "porch_library")
+        _, _, view = render_card(char, state=state, kind=kind, message_id=msg.id, met=0, stoop=card)
+        try:
+            await msg.edit(view=view)
+        except discord.HTTPException as e:
+            log.warning("Couldn't add %s card buttons: %s", kind, e)
+        return msg
+
+    # ------------------------------------------------------------ the library: catalog, backlog, backfill
+    async def catalog(self, rating: str) -> list[dict]:
+        """Every public card on The Stoop for a rating (cached 10 minutes)."""
+        hit = self._catalog_cache.get(rating)
+        if hit and time.time() - hit[0] < 600:
+            return hit[1]
+        cards, complete = await self.client.all_cards(rating=rating)
+        if not complete:
+            log.warning("Stoop catalog (%s) stopped at the page limit; counts may be low", rating)
+        self._catalog_cache[rating] = (time.time(), cards)
+        return cards
+
+    def backlog_for(self, guild_id: int, channel_id: int, cards: list[dict]) -> dict:
+        posted_ids = self.db.stoop_ids_posted_in(channel_id)
+        posted = skipped = 0
+        missing = []
+        for c in cards:
+            if c["id"] in posted_ids:
+                posted += 1
+            elif self.skipped(guild_id, c):
+                skipped += 1
+            else:
+                missing.append(c)
+        missing.sort(key=lambda c: (c.get("createdAt") or "", c["id"]))     # oldest first
+        return {"total": len(cards), "posted": posted, "skipped": skipped, "missing": missing}
+
+    async def backlog(self, guild_id: int) -> dict:
+        """{'sfw': {...}, 'nsfw': {...}} for the guild's porch channels (only those that are set up)."""
+        cfg = self.db.get_config(guild_id)
+        out = {}
+        for rating, channel_id in (("sfw", cfg.porch_channel_id if cfg else None),
+                                   ("nsfw", cfg.porch18_channel_id if cfg else None)):
+            if channel_id:
+                out[rating] = dict(channel_id=channel_id,
+                                   **self.backlog_for(guild_id, channel_id, await self.catalog(rating)))
+        return out
+
+    async def start_backfill(self, guild_id: int, rating: str, per_hour: int, limit: Optional[int],
+                             user_id: Optional[int]) -> tuple[Optional[dict], str]:
+        """Queue the missing cards (oldest first). Returns (job, error message)."""
+        cfg = self.db.get_config(guild_id)
+        channel_id = (cfg.porch_channel_id if rating == "sfw" else cfg.porch18_channel_id) if cfg else None
+        if not channel_id:
+            return None, "not_set"
+        if rating == "nsfw" and not self.porch_channels(cfg).get(channel_id):
+            return None, "not_age_restricted"
+        self._catalog_cache.pop(rating, None)                     # always start from a fresh list
+        info = self.backlog_for(guild_id, channel_id, await self.catalog(rating))
+        missing = info["missing"][:limit] if limit else info["missing"]
+        self.db.start_backfill(guild_id, channel_id, rating == "nsfw", per_hour,
+                               [(c["id"], c.get("createdAt") or "") for c in missing], user_id)
+        return self.db.backfill(guild_id, channel_id), ""
+
+    async def backfill_once(self) -> None:
+        """Post the next library card for each running backfill, at its per-hour pace."""
+        if not self.client.enabled or self.client.unauthorized:
+            return
+        now = time.time()
+        for job in self.db.backfills("running"):
+            if job["last_post_at"] and now - job["last_post_at"] < 3600 / max(1, job["per_hour"]):
                 continue
-            f = await self.image_file(char.get("stoop_asset"))
-            content, embed, _ = render_card(char, state=state, kind="arrival", message_id=0, met=0, stoop=card,
-                                            image_name=f.filename if f else None, porch18_id=cfg.porch18_channel_id)
-            try:
-                msg = await channel.send(content, embed=embed, files=[f] if f else [],
-                                         allowed_mentions=discord.AllowedMentions.none())
-            except discord.HTTPException as e:
-                log.warning("Couldn't post arrival: %s", e)
+            cfg = self.db.get_config(job["guild_id"])
+            channel = self.bot.get_channel(job["channel_id"])
+            if not cfg or channel is None:
+                continue
+            if job["nsfw"] and not bool(getattr(channel, "is_nsfw", lambda: False)()):
+                continue                                          # 18+ porch not age-restricted: wait
+            await self._backfill_step(cfg, channel, job)
+
+    async def _backfill_step(self, cfg: GuildConfig, channel, job: dict) -> None:
+        gid, cid = job["guild_id"], job["channel_id"]
+        for _ in range(10):                                       # skip past unusable cards, post at most one
+            card_id = self.db.next_backfill_card(gid, cid)
+            if card_id is None:
+                self.db.set_backfill(gid, cid, status="done")
+                n = job["posted"]
+                await self.alert_mods(gid, T.BACKFILL_DONE.format(channel=f"<#{cid}>", n=n, s="" if n == 1 else "s"))
+                log.info("Library backfill finished in %s (%d posted)", cid, n)
                 return
-            # Track it before anything else can fail, so it's never orphaned (or posted twice).
-            self.db.add_porch_post(msg.id, cfg.guild_id, channel_id, "arrival", adult_ok=adult_ok,
-                                   stoop_id=card["id"], state=state, shown_version=card.get("version"),
-                                   shown_asset=char.get("stoop_asset") if f else None)
-            self.db.log(cfg.guild_id, msg.id, None, "porch_arrival")
-            _, _, view = render_card(char, state=state, kind="arrival", message_id=msg.id, met=0, stoop=card)
+            if self.db.porch_post_in_channel(card_id, cid):
+                self.db.drop_backfill_card(gid, cid, card_id)     # already there (feed or a member)
+                continue
             try:
-                await msg.edit(view=view)
-            except discord.HTTPException as e:
-                log.warning("Couldn't add arrival buttons: %s", e)
+                card = await self.client.card(card_id)            # fresh: rating, version, still public?
+            except StoopError as e:
+                log.warning("Backfill: Stoop lookup failed (%s); will retry", e)
+                return
+            if card is None or bool(card.get("nsfw")) != bool(job["nsfw"]) or self.skipped(gid, card):
+                self.db.drop_backfill_card(gid, cid, card_id)
+                continue
+            await self.apply_card(card)
+            msg = await self.post_feed_card(cfg, channel, card, "library")
+            if msg is False:
+                return                                            # Discord refused: retry next minute
+            self.db.drop_backfill_card(gid, cid, card_id)
+            if msg is not None:
+                job["posted"] += 1
+                self.db.set_backfill(gid, cid, posted=job["posted"], last_post_at=time.time())
+            return
+
+    # ------------------------------------------------------------ skipping characters
+    async def remove_posts(self, posts: list[dict]) -> int:
+        n = 0
+        for post in posts:
+            ch = self.bot.get_channel(post["channel_id"])
+            if ch is not None:
+                try:
+                    await ch.get_partial_message(post["message_id"]).delete()
+                except discord.HTTPException:
+                    pass
+            self.db.delete_porch_post(post["message_id"])
+            n += 1
+        return n
+
+    async def skip(self, guild_id: int, kind: str, target_id: str, label: Optional[str], reason: Optional[str],
+                   by_user: Optional[int], remove: bool) -> int:
+        """Never auto-post this card / creator again. Returns how many bot cards were removed."""
+        self.db.add_skip(guild_id, kind, target_id, label, reason, by_user)
+        if not remove:
+            return 0
+        posts = (self.db.auto_posts_for(guild_id, target_id) if kind == "card"
+                 else self.db.auto_posts_by_creator(guild_id, target_id))
+        return await self.remove_posts(posts)
+
+    async def skip_from_report(self, interaction: discord.Interaction, alert: discord.Message, mid: int) -> None:
+        post = self.db.porch_post(mid)
+        removed_any = False
+        skipped = False
+        if post:
+            char, _ = self.char_for_post(post)
+            if post["stoop_id"]:
+                await self.skip(post["guild_id"], "card", post["stoop_id"], (char or {}).get("title"),
+                                "from a 🚩 report", interaction.user.id, remove=True)
+                skipped = True
+            removed_any = bool(await self.remove_posts([post])) or skipped
+        note = T.SKIP_DONE_NOTE.format(skipped=" and skipped" if skipped else "", mod=interaction.user.mention)
+        try:
+            await alert.edit(content=(alert.content or "") + note, view=None,
+                             allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            pass
+        await tell(interaction, "Done. 🙈" if removed_any else T.PORCH_CARD_GONE)
+
+    def is_staff(self, member) -> bool:
+        p = getattr(member, "guild_permissions", None)
+        if p is not None and (p.administrator or p.manage_guild):
+            return True
+        cfg = self.db.get_config(member.guild.id) if getattr(member, "guild", None) else None
+        roles = set(cfg.mod_role_ids) if cfg else set()
+        return any(r.id in roles for r in getattr(member, "roles", []))
 
     async def redraw_if_wording_changed(self) -> None:
         """Cards posted by an older version get the current labels and wording (once per version)."""
@@ -1175,8 +1378,16 @@ class Porch(commands.Cog):
         except Exception:
             log.exception("Stoop re-check failed (will retry)")
 
+    @tasks.loop(minutes=1)
+    async def backfill_loop(self) -> None:
+        try:
+            await self.backfill_once()
+        except Exception:
+            log.exception("Library backfill step failed (will retry)")
+
     @feed_loop.before_loop
     @recheck_loop.before_loop
+    @backfill_loop.before_loop
     async def _wait_ready(self) -> None:
         await self.bot.wait_until_ready()
 

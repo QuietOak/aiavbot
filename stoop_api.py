@@ -121,6 +121,21 @@ def card_id_from_url(url: str) -> Optional[str]:
     return m.group(1).lower() if m else None
 
 
+def parse_card_ref(text: str) -> Optional[str]:
+    """A Stoop card link or a bare card id -> the id."""
+    text = (text or "").strip()
+    return card_id_from_url(text) or (text.lower() if re.fullmatch(UUID_RE, text) else None)
+
+
+def parse_creator_ref(text: str) -> Optional[str]:
+    """A Stoop creator profile link (hub.frontporchai.app/creator/<id>) or a bare creator id -> the id."""
+    text = (text or "").strip()
+    m = re.search(r"/creator/([A-Za-z0-9_-]{4,64})", text)
+    if m:
+        return m.group(1)
+    return text if re.fullmatch(r"[A-Za-z0-9_-]{4,64}", text) else None
+
+
 def iso(dt: datetime) -> str:
     """UTC ISO-8601 with milliseconds and Z, the same format the API uses."""
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
@@ -359,6 +374,19 @@ class StoopClient:
             if len(items) < take:
                 return list(seen.values()), True
         log.warning("Stoop %s poll stopped at %d pages; some changes may be skipped", rating, max_pages)
+        return list(seen.values()), False
+
+    async def all_cards(self, *, rating: str, max_pages: int = 200) -> tuple[list[dict], bool]:
+        """The whole public catalog for a rating (newest first), deduped. (cards, complete)."""
+        seen: dict[str, dict] = {}
+        for page in range(max_pages):
+            data = await self.list_page(rating=rating, page=page)
+            items = data.get("items") or []
+            for c in items:
+                if isinstance(c, dict) and c.get("id"):
+                    seen[c["id"]] = c
+            if len(items) < (data.get("take") or MAX_TAKE):
+                return list(seen.values()), True
         return list(seen.values()), False
 
     async def card(self, card_id: str) -> Optional[dict]:

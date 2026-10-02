@@ -322,6 +322,7 @@ MILESTONE_DEFAULT = "🎉 {link} has **{count} reactions**! Congratulations {aut
 # Character channels: an SFW porch and an 18+ porch (Discord age-restricted). Cards come from members
 # sharing a character (The Stoop, Chub, ..., or a PNG/JSON card file) and from The Stoop arrival feed.
 PORCH_ARRIVAL = "🚪 Someone new just walked up to the porch: **{name}**!"
+PORCH_LIBRARY = "📚 From The Stoop's library: **{name}**"
 PORCH_SHARED = "🎭 **{poster}** brought **{name}** to the porch!"
 PORCH_ALREADY_HERE = "🎭 **{name}** is already on the porch! Say hi here: {url}"
 PORCH_CREATOR_FIELD = "Creator"                 # non-Stoop characters
@@ -417,6 +418,13 @@ MOD_ALERT_MISSING = ("🛡️ A Stoop character shared here is no longer availab
                      "{url}\nDiscord may still show its old preview. Check whether the post needs removing.")
 MOD_ALERT_ADULT = ("🛡️ A Stoop character shared in an SFW channel is now **18+**: {url}\n"
                    "Discord may still show its old preview. Check whether the post needs removing.")
+
+# Mod tools: skipping characters and the library backfill
+SKIP_BUTTON = "🙈 Remove & skip"
+SKIP_BUTTON_LOCAL = "🗑️ Remove card"
+SKIP_DONE_NOTE = "\n🙈 **Removed{skipped} by {mod}.**"
+SKIP_NOT_STAFF = "Only mods and admins can do that."
+BACKFILL_DONE = "📚 Library backfill finished in {channel}: {n} character{s} posted."
 
 # Nightly update: characters line (shown only when a porch channel is set up)
 PORCH_STAT_TITLE = "🎭 Characters"
