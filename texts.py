@@ -275,31 +275,34 @@ GALLERY_POSTED = "Your collab is presented, with a comment thread: {url} 🎉"
 MIRROR_HEADER = "🎉 **New AIAV Club collab!** {credits}"
 MIRROR_BUTTON = "💬 Comments & original"
 
-# /aiav gallery_report
-REPORT_TITLE = "📚 **AIAV gallery, {month}**: {entries} publication{s} · {people} people involved"
-REPORT_LINE = "{name}: {count}"
+# /aiav gallery_report (and the automatic monthly report)
+REPORT_EMBED_TITLE = "📚 AIAV gallery · {month}"
+REPORT_SUMMARY = "**{entries}** publication{s} · **{people}** people involved"
+REPORT_MEDALS = ["🥇", "🥈", "🥉"]
+REPORT_ROW = "{rank} **{name}** · {count}"
+REPORT_MORE = "…and {n} more"
+REPORT_FOOTER = "Everyone credited on a presented collab counts, plus solo posts in the gallery."
+REPORT_INTRO_AUTO = "Here's who brought AIAV Club to life last month. Thank you all! 💜"
 REPORT_EMPTY = "Nothing was published in {channel} in {month}."
 
 # ================================================================ nightly update
 # Posted in the lounge at midnight (local time of the PC running the bot).
 NIGHTLY_TITLE = "🌙 AIAV Club nightly update"
+WEEKLY_TITLE = "📅 AIAV Club weekly update"
 UPDATE_TITLE = "📊 AIAV Club update"
 NIGHTLY_INTRO = "Here's what's been happening around AIAV Club. Thanks to everyone sharing and collaborating! 💜"
-NIGHTLY_PERIODS = [(1, "Last day"), (7, "Last 7 days"), (30, "Last 30 days")]
-# (action logged by the bot, label). Order = order shown.
+# Periods shown, per schedule (/aiav settings activity_update:)
+PERIODS_DAILY = [(1, "Last day"), (7, "Last 7 days"), (30, "Last 30 days")]
+PERIODS_WEEKLY = [(7, "This week"), (30, "Last 30 days")]
+WEEKLY_DAY = 0                 # weekly update: Monday at midnight (0 = Monday ... 6 = Sunday)
+# (action logged by the bot, label, emoji). Order = order shown. Kept short on purpose: the most active things.
 STAT_LABELS = [
-    ("shared", "shares"),
-    ("open_panel", "panels opened"),
-    ("line", "lines"),
-    ("thread", "threads"),
-    ("collab", "collab requests"),
-    ("collab_response", "collab replies"),
-    ("interested", "'interested'"),
-    ("theme", "theme shares"),
-    ("gallery_collab", "gallery collabs"),
-    ("reactions", "reactions"),
-    ("milestone", "milestones"),
-    ("just_sharing", "just sharing"),
+    ("shared", "shares", "🎵"),
+    ("open_panel", "panels opened", "🚀"),
+    ("collab", "collab requests", "🤝"),
+    ("interested", "interested", "🙋"),
+    ("gallery_collab", "gallery collabs", "🎉"),
+    ("reactions", "reactions", "❤️"),
 ]
 
 
@@ -429,9 +432,8 @@ BACKFILL_DONE = "📚 Library backfill finished in {channel}: {n} character{s} p
 # Nightly update: characters line (shown only when a porch channel is set up)
 PORCH_STAT_TITLE = "🎭 Characters"
 PORCH_STAT_LABELS = [
-    ("porch_arrival", "new arrivals"),
-    ("porch_share", "shared"),
-    ("porch_hi", "threads"),
-    ("porch_met", "'interested'"),
+    ("porch_arrival", "new arrivals", "🚪"),
+    ("porch_share", "shared", "🎭"),
+    ("porch_met", "interested", "💜"),
 ]
 PORCH_STOOP_TOTAL = "The Stoop: {total:,} characters"

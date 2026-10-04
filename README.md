@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  🎵 Music sharing · 🤝 Collab requests · 🎭 Characters · 🎉 Gallery · 🏆 Reaction milestones · 🌙 Nightly updates
+  🎵 Music sharing · 🤝 Collab requests · 🎭 Characters · 🎉 Gallery · 🏆 Reaction milestones · 📅 Weekly updates
 </p>
 
 <p align="center">
@@ -132,8 +132,8 @@ If a forum requires tags, the bot can't post there. Turn that off or use a threa
 | Gallery | anything new | asks **✨ Is this a collab result?** Yes asks who they worked with (server members and/or anyone else by name), then posts a congratulations card with a comment thread. Every presented collab is also **copied to the multimedia gallery** (`showcase:`), files included, with a link back to the comments. **No** removes the prompt and privately, politely reminds them the gallery is for collab results, and that a thread, the lounge or the music channel suits other work. |
 | Porch (SFW) | a character: a Stoop / Chub / JanitorAI / ... link, or a PNG/JSON character card file | replies with a character card: art, summary, creator, tags and **🧵 Start a thread** (a conversation thread for the character), **💜 I'm interested in this card** (a count, plus an optional comment in the thread), **🤝 Start a collab** (the character collab form; the request goes to collab requests) and **🚩 Report** (private note to the mods; for Stoop characters also to The Stoop's moderators, without the reporter's name). With the Stoop key, the **arrival feed** also posts new SFW Stoop characters here. An 18+ character shared here shows only its name, a link and "🔞 18+ character". |
 | 18+ porch (age-restricted) | the same | the same, with 18+ characters shown in full. The 18+ arrival feed posts new 18+ Stoop characters here. Anything copied out of this channel (e.g. a collab request) shows only the name, a link and 🔞. |
-| Lounge | (nothing) | posts the **🌙 nightly update** at midnight with activity for the last day, 7 days and 30 days |
-| All of the above + theme channels | reactions on a post with a link, image, file or embed | counts them (shown in the nightly update) and cheers milestones: at **3, 10, 20, 30, 50** reactions it replies to the post, e.g. *"✨ Wow, … just hit 10 reactions! Go @Creator!"* (no ping) |
+| Lounge | (nothing) | posts the **📅 activity update**: weekly (Monday midnight, this week + last 30 days) by default, or daily. Optionally the **📚 monthly gallery report** on the 1st. |
+| All of the above + theme channels | reactions on a post with a link, image, file or embed | counts them (shown in the activity update) and cheers milestones: at **3, 10, 20, 30, 50** reactions it replies to the post, e.g. *"✨ Wow, … just hit 10 reactions! Go @Creator!"* (no ping) |
 
 In the collab and gallery channels the bot ignores replies, messages inside threads, and short remarks
 like "cool!" (under 15 characters with no link or image). Only the poster can use their prompt's buttons,
@@ -155,9 +155,14 @@ collab cards and gallery cards count for the member who made them. `/aiav settin
 turns the shout-outs off (reactions are still counted). `milestone_channels:Every channel` extends them to the
 whole server. Milestone numbers and messages are in `texts.py` (`MILESTONES`, `MILESTONE_MESSAGES`).
 
-**Nightly update:** posted at midnight on the PC's clock. If the PC was off or asleep, it's posted when
-the bot starts, as long as it's before noon. `/aiav update` posts one right now.
-`/aiav settings nightly_update:False` turns it off.
+**Activity update:** posted in the lounge at midnight (server clock), **weekly on Mondays** by default with
+"This week" and "Last 30 days": shares, panels opened, collab requests, interested, gallery collabs and reactions
+(plus a characters line when the porch is set up). `/aiav settings activity_update:` switches between weekly, daily
+and off. If the bot was down at midnight, it posts when it's back, as long as it's before noon.
+`/aiav update` posts one right now.
+
+**Gallery report:** `/aiav settings gallery_report_auto:Monthly` posts last month's report (who was involved in
+gallery publications, with 🥇🥈🥉 for the top three) in the lounge on the 1st of each month.
 
 ## The Stoop partner API (optional)
 
@@ -216,7 +221,7 @@ All member-facing text, collab types and response types are in **`texts.py`**. E
 | `bot.py` | Starts the bot |
 | `suno_flow.py` | Music, collab-channel and gallery flows: prompts, panel, pop-ups, cards, threads |
 | `admin.py` | `/aiav` admin commands |
-| `nightly.py` | The midnight lounge update |
+| `nightly.py` | Scheduled lounge posts: the activity update and the monthly gallery report |
 | `reactions.py` | Reaction counting and milestone shout-outs |
 | `gallery_report.py` | The monthly "who was involved" count for `/aiav gallery_report` |
 | `porch.py` | The character porch: character cards, thread / interested / collab / report (incl. to The Stoop's moderators), the Stoop arrival feed and card syncing |

@@ -100,11 +100,28 @@ async def count_gallery(db, guild: discord.Guild, channel, start: datetime, end:
     return publications, counts, names
 
 
-def format_report(label: str, publications: int, counts: Counter, names: dict, texts) -> list[str]:
-    """Lines for Discord: a title, then 'Name: count', most involved first."""
-    title = texts.REPORT_TITLE.format(month=label, entries=publications, s="" if publications == 1 else "s",
-                                      people=len(counts))
-    rows = sorted(counts.items(), key=lambda kv: (-kv[1], names.get(kv[0], "").lower()))
-    lines = [title] + [texts.REPORT_LINE.format(name=discord.utils.escape_markdown(names.get(k, k)), count=n)
-                       for k, n in rows]
-    return lines
+def ranked(counts: Counter, names: dict) -> list[tuple[str, int]]:
+    """[(display name, count)], most involved first, then by name."""
+    return [(names.get(k, k), n) for k, n in sorted(counts.items(), key=lambda kv: (-kv[1], names.get(kv[0], "").lower()))]
+
+
+def build_report_embed(label: str, publications: int, counts: Counter, names: dict,
+                       max_rows: int = 40) -> discord.Embed:
+    """The pretty version: medals for the top three, then a numbered list."""
+    import texts as T
+    rows = ranked(counts, names)
+    lines = [T.REPORT_SUMMARY.format(entries=publications, s="" if publications == 1 else "s", people=len(rows)), ""]
+    for i, (name, n) in enumerate(rows[:max_rows]):
+        rank = T.REPORT_MEDALS[i] if i < len(T.REPORT_MEDALS) else f"`{i + 1}.`"
+        lines.append(T.REPORT_ROW.format(rank=rank, name=discord.utils.escape_markdown(name), count=n))
+    if len(rows) > max_rows:
+        lines.append(T.REPORT_MORE.format(n=len(rows) - max_rows))
+    embed = discord.Embed(title=T.REPORT_EMBED_TITLE.format(month=label), description="\n".join(lines)[:4000],
+                          color=0xF5B942)
+    embed.set_footer(text=T.REPORT_FOOTER)
+    return embed
+
+
+def format_report(label: str, publications: int, counts: Counter, names: dict, texts=None) -> list[str]:
+    """Plain lines (copy-friendly): 'Name: count', most involved first."""
+    return [f"{name}: {n}" for name, n in ranked(counts, names)]

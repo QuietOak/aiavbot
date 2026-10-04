@@ -282,6 +282,9 @@ class GuildConfig:
     stoop_notes: int = 1             # "✨ got an update" notes in conversation threads
     stoop_reports: int = 1           # also send 🚩 reports about Stoop characters to The Stoop's moderators
     showcase_channel_id: Optional[int] = None   # multimedia gallery: every presented collab is mirrored here
+    update_cadence: str = "weekly"              # activity update in the lounge: daily | weekly
+    gallery_report_cadence: str = "off"         # automatic gallery report in the lounge: off | monthly
+    gallery_report_last: Optional[str] = None   # "YYYY-MM" of the last automatic gallery report
     stoop_feed_since: Optional[str] = None     # ISO time the SFW feed was turned on (no backlog before it)
     stoop_feed18_since: Optional[str] = None
 
@@ -379,7 +382,9 @@ class Storage:
                          ("mod_channel_id", "INTEGER"), ("stoop_feed", "INTEGER NOT NULL DEFAULT 0"),
                          ("stoop_feed18", "INTEGER NOT NULL DEFAULT 0"), ("stoop_notes", "INTEGER NOT NULL DEFAULT 1"),
                          ("stoop_feed_since", "TEXT"), ("stoop_feed18_since", "TEXT"),
-                         ("stoop_reports", "INTEGER NOT NULL DEFAULT 1"), ("showcase_channel_id", "INTEGER")):
+                         ("stoop_reports", "INTEGER NOT NULL DEFAULT 1"), ("showcase_channel_id", "INTEGER"),
+                         ("update_cadence", "TEXT NOT NULL DEFAULT 'weekly'"),
+                         ("gallery_report_cadence", "TEXT NOT NULL DEFAULT 'off'"), ("gallery_report_last", "TEXT")):
             if col not in cols:
                 self.conn.execute(f"ALTER TABLE guild_config ADD COLUMN {col} {ddl}")
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(collab_requests)")}
@@ -459,6 +464,15 @@ class Storage:
             self._exec("UPDATE guild_config SET nightly_update=? WHERE guild_id=?", (int(enabled), guild_id))
         if last is not None:
             self._exec("UPDATE guild_config SET nightly_last=? WHERE guild_id=?", (last, guild_id))
+
+    def set_schedule(self, guild_id: int, **fields) -> None:
+        """update_cadence, gallery_report_cadence, gallery_report_last."""
+        allowed = {"update_cadence", "gallery_report_cadence", "gallery_report_last"}
+        self._exec("INSERT OR IGNORE INTO guild_config (guild_id) VALUES (?)", (guild_id,))
+        for k, v in fields.items():
+            if k not in allowed:
+                raise ValueError(k)
+            self._exec(f"UPDATE guild_config SET {k}=? WHERE guild_id=?", (v, guild_id))
 
     def set_milestone_settings(self, guild_id: int, enabled: Optional[bool] = None,
                                scope: Optional[str] = None) -> None:

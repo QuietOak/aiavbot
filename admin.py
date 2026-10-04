@@ -88,6 +88,12 @@ def valid_emoji(text: str) -> bool:
     return 0 < len(text) <= 8 and not any(c.isascii() and c.isalnum() for c in text)
 
 
+def schedule_text(cfg) -> str:
+    if cfg is not None and not cfg.nightly_update:
+        return "off"
+    return "daily (midnight)" if cfg and cfg.update_cadence == "daily" else "weekly (Monday midnight)"
+
+
 def fmt_channel(channel_id: Optional[int]) -> str:
     return f"<#{channel_id}>" if channel_id else "*not set*"
 
@@ -273,7 +279,8 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
     @app_commands.command(name="settings", description="Adjust AIAVBOT behaviour")
     @app_commands.describe(
         reply_timeout="Minutes before an unused bot prompt is removed (default 15)",
-        nightly_update="Post the midnight update in the lounge (default on)",
+        activity_update="Activity update in the lounge: weekly (Mondays, default), daily, or off",
+        gallery_report_auto="Post last month's gallery report in the lounge on the 1st (default off)",
         reaction_milestones="Cheer posts that reach 3, 10, 20, 30, 50 reactions (default on)",
         milestone_channels="Where reactions are counted: AIAV channels only (default) or every channel",
         stoop_feed="Post new SFW Stoop characters in the porch (default off)",
@@ -281,13 +288,22 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
         stoop_update_notes="Note character updates (v2 → v3) in their conversation threads (default on)",
         stoop_reports="Also send 🚩 reports about Stoop characters to The Stoop's moderators (default on)",
     )
+    @app_commands.choices(activity_update=[
+        app_commands.Choice(name="Weekly (Monday midnight)", value="weekly"),
+        app_commands.Choice(name="Daily (every midnight)", value="daily"),
+        app_commands.Choice(name="Off", value="off"),
+    ], gallery_report_auto=[
+        app_commands.Choice(name="Monthly (on the 1st)", value="monthly"),
+        app_commands.Choice(name="Off", value="off"),
+    ])
     @app_commands.choices(milestone_channels=[
         app_commands.Choice(name="AIAV channels + theme channels", value="aiav"),
         app_commands.Choice(name="Every channel", value="all"),
     ])
     async def settings_cmd(self, interaction: discord.Interaction,
                            reply_timeout: Optional[app_commands.Range[int, 1, 1440]] = None,
-                           nightly_update: Optional[bool] = None,
+                           activity_update: Optional[app_commands.Choice[str]] = None,
+                           gallery_report_auto: Optional[app_commands.Choice[str]] = None,
                            reaction_milestones: Optional[bool] = None,
                            milestone_channels: Optional[app_commands.Choice[str]] = None,
                            stoop_feed: Optional[bool] = None,
@@ -320,11 +336,18 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
                                            scope=milestone_channels.value if milestone_channels else None)
         if reply_timeout is not None:
             self.db.set_reply_timeout(interaction.guild_id, reply_timeout)
-        if nightly_update is not None:
-            self.db.set_nightly(interaction.guild_id, enabled=nightly_update)
+        if activity_update is not None:
+            if activity_update.value == "off":
+                self.db.set_nightly(interaction.guild_id, enabled=False)
+            else:
+                self.db.set_nightly(interaction.guild_id, enabled=True)
+                self.db.set_schedule(interaction.guild_id, update_cadence=activity_update.value)
+        if gallery_report_auto is not None:
+            self.db.set_schedule(interaction.guild_id, gallery_report_cadence=gallery_report_auto.value)
         cfg = self.db.get_config(interaction.guild_id)
         timeout = cfg.reply_timeout_min if cfg else 15
-        nightly = "on" if (cfg is None or cfg.nightly_update) else "off"
+        nightly = schedule_text(cfg)
+        greport = "monthly (on the 1st)" if cfg and cfg.gallery_report_cadence == "monthly" else "off"
         lounge = "" if cfg and cfg.lounge_channel_id else " (set a lounge with `/aiav setup lounge:`)"
         milestones = "on" if (cfg is None or cfg.milestones) else "off"
         scope = "every channel" if cfg and cfg.milestone_scope == "all" else "AIAV + theme channels"
@@ -335,7 +358,8 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
         porch_hint = "" if cfg and cfg.porch_channel_id else " (set a porch with `/aiav setup porch:`)"
         await reply(interaction,
             f"⏱️ Unused prompts are shortened (music) or removed (collab/gallery) after **{timeout} min**.\n"
-            f"🌙 Nightly lounge update: **{nightly}**{lounge}\n"
+            f"📅 Activity update: **{nightly}**{lounge}\n"
+            f"📚 Automatic gallery report: **{greport}**\n"
             f"🏆 Reaction milestones: **{milestones}** ({scope})\n"
             f"🎭 Stoop arrival feed: **{feed}**{porch_hint} · 18+ feed: **{feed18}** · update notes: **{notes}**\n"
             f"🚩 Reports also go to The Stoop's moderators: **{sreports}**")
@@ -362,21 +386,12 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
             return await reply(interaction, f"I couldn't read {channel.mention}. Check I have Read Message History there.")
         if not pubs:
             return await reply(interaction, T.REPORT_EMPTY.format(channel=channel.mention, month=label))
-        lines = G.format_report(label, pubs, counts, names, T)
-        chunks, chunk = [], ""
-        for line in lines:
-            if len(chunk) + len(line) + 1 > 1900:
-                chunks.append(chunk)
-                chunk = ""
-            chunk += line + "\n"
-        chunks.append(chunk)
-        for c in chunks:
-            if public and interaction.channel is not None:
-                await interaction.channel.send(c, allowed_mentions=discord.AllowedMentions.none())
-            else:
-                await interaction.followup.send(c, ephemeral=True)
-        if public:
+        embed = G.build_report_embed(label, pubs, counts, names)
+        if public and interaction.channel is not None:
+            await interaction.channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
             await reply(interaction, "Posted. ✅")
+        else:
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="update", description="Post an AIAV Club activity update in the lounge now")
     async def update_cmd(self, interaction: discord.Interaction) -> None:
@@ -402,8 +417,8 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
             f"🎵 Music: {fmt_channel(cfg.music_channel_id)}",
             f"🤝 Collab requests: {fmt_channel(cfg.collab_channel_id)}",
             f"🖼️ Gallery: {fmt_channel(cfg.gallery_channel_id)} → mirrored to {fmt_channel(cfg.showcase_channel_id)}",
-            f"💬 Lounge: {fmt_channel(cfg.lounge_channel_id)} · nightly update "
-            + ("on" if cfg.nightly_update else "off"),
+            f"💬 Lounge: {fmt_channel(cfg.lounge_channel_id)} · activity update {schedule_text(cfg)} · gallery report "
+            + ("monthly" if cfg.gallery_report_cadence == "monthly" else "off"),
             f"⏱️ Unused prompts tidied after {cfg.reply_timeout_min} min",
             "🏆 Reaction milestones: " + ("on" if cfg.milestones else "off")
             + (" (every channel)" if cfg.milestone_scope == "all" else " (AIAV + theme channels)"),
@@ -422,7 +437,7 @@ class AIAVAdmin(commands.GroupCog, group_name="aiav", group_description="AIAVBOT
 
         lines.append("📊 **Activity**")
         from datetime import datetime
-        for label, stats in period_stats(self.db, guild.id, datetime.now().astimezone()):
+        for label, stats in period_stats(self.db, guild.id, datetime.now().astimezone(), cfg.update_cadence):
             lines.append(f"**{label}:** {stats_line(stats)}")
             if cfg.porch_channel_id or cfg.porch18_channel_id:
                 lines.append(f"    {T.PORCH_STAT_TITLE}: {stats_line(stats, T.PORCH_STAT_LABELS)}")
